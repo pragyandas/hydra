@@ -129,3 +129,20 @@ func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory acto
 	actor.Start()
 	return actor, nil
 }
+
+func (as *ActorSystem) NewActorWithHandler(id string, actorType string, handler actor.Handler) (*actor.Actor, error) {
+	actor, err := actor.NewActor(
+		as.ctx,
+		id,
+		actorType,
+		actor.WithHandler(handler),
+		actor.WithTransport(as.createTransport),
+		actor.WithCache(as.cache),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	actor.Start()
+	return actor, nil
+}
