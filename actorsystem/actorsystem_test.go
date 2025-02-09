@@ -14,12 +14,11 @@ import (
 )
 
 func TestActorCommunication(t *testing.T) {
-	// Update server creation with JetStream enabled
 	opts := &server.Options{
 		Port:      -1, // Use random port
 		Host:      "127.0.0.1",
 		JetStream: true,
-		StoreDir:  t.TempDir(), // Use temp dir for storage
+		StoreDir:  t.TempDir(),
 	}
 	ns := natsd.RunServer(opts)
 	if ns == nil {
@@ -27,12 +26,10 @@ func TestActorCommunication(t *testing.T) {
 	}
 	defer ns.Shutdown()
 
-	// Wait for server to be ready
 	if !ns.ReadyForConnections(4 * time.Second) {
 		t.Fatal("NATS server failed to start")
 	}
 
-	// Create config for test with local server URL
 	config := &Config{
 		ID:      "test-system",
 		NatsURL: ns.ClientURL(), // Use embedded server URL
@@ -50,8 +47,7 @@ func TestActorCommunication(t *testing.T) {
 		Hostname: "test-node",
 	}
 
-	// Create actor system
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	system, err := NewActorSystem(ctx, config)
@@ -60,24 +56,23 @@ func TestActorCommunication(t *testing.T) {
 	}
 	defer system.Close()
 	var receivedCount atomic.Int32
-	var pingActor *actor.Actor
 
-	// Create ping actor
-	pingHandler := func(msg []byte) error {
-		fmt.Println("ping received message", string(msg))
-		return pingActor.SendMessage("pong", "pong", msg)
+	pingHandler := func(self *actor.Actor) actor.Handler {
+		return func(msg []byte) error {
+			fmt.Println("ping received message", string(msg))
+			return self.SendMessage("pong", "pong", msg)
+		}
 	}
 
-	// Create pong actor
-	pongHandler := func(msg []byte) error {
-		receivedCount.Add(1)
-		pingActor.SendMessage("ping", "ping", msg)
-		fmt.Println("pong received message", string(msg))
-		return nil
+	pongHandler := func(self *actor.Actor) actor.Handler {
+		return func(msg []byte) error {
+			receivedCount.Add(1)
+			fmt.Println("pong received message", string(msg))
+			return self.SendMessage("ping", "ping", msg)
+		}
 	}
 
-	// Create both actors
-	pingActor, err = system.NewActor("ping", "ping", pingHandler)
+	pingActor, err := system.NewActor("ping", "ping", pingHandler)
 	if err != nil {
 		t.Fatalf("Failed to create ping actor: %v", err)
 	}
@@ -87,8 +82,9 @@ func TestActorCommunication(t *testing.T) {
 		t.Fatalf("Failed to create pong actor: %v", err)
 	}
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	if err := pingActor.SendMessage("pong", "pong", []byte(fmt.Sprintf("ping-%d", time.Now().Unix()))); err != nil {
+		t.Errorf("Failed to send message: %v", err)
+	}
 
 	for {
 		select {
@@ -99,11 +95,6 @@ func TestActorCommunication(t *testing.T) {
 				t.Error("No messages were received")
 			}
 			return
-
-		case <-ticker.C:
-			if err := pingActor.SendMessage("pong", "pong", []byte(fmt.Sprintf("ping-%d", time.Now().Unix()))); err != nil {
-				t.Errorf("Failed to send message: %v", err)
-			}
 		}
 	}
 }

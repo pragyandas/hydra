@@ -113,12 +113,12 @@ func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*tr
 	}, a)
 }
 
-func (as *ActorSystem) NewActor(id string, actorType string, handler func([]byte) error) (*actor.Actor, error) {
+func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
 	actor, err := actor.NewActor(
 		as.ctx,
 		id,
 		actorType,
-		handler,
+		actor.WithHandlerFactory(handlerFactory),
 		actor.WithTransport(as.createTransport),
 		actor.WithCache(as.cache),
 	)

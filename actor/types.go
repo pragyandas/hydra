@@ -9,6 +9,10 @@ import (
 
 type ActorOption func(*Actor)
 
+type Handler func([]byte) error
+
+type HandlerFactory func(actor *Actor) Handler
+
 // TransportFactory creates a transport for an actor
 type TransportFactory func(ctx context.Context, actor *Actor) (*transport.ActorTransport, error)
 

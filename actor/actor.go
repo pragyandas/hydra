@@ -11,12 +11,24 @@ import (
 type Actor struct {
 	id        string
 	actorType string
-	handler   func([]byte) error
+	handler   Handler
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 	msgCh     chan Message
 	transport *ActorTransport
 	cache     *Cache
+}
+
+func WithHandlerFactory(factory HandlerFactory) ActorOption {
+	return func(a *Actor) {
+		a.handler = factory(a)
+	}
+}
+
+func WithHandler(handler Handler) ActorOption {
+	return func(a *Actor) {
+		a.handler = handler
+	}
 }
 
 func WithTransport(factory TransportFactory) ActorOption {
@@ -40,7 +52,6 @@ func NewActor(
 	ctx context.Context,
 	id string,
 	actorType string,
-	handler func([]byte) error,
 	opts ...ActorOption,
 ) (*Actor, error) {
 	if id == "" {
@@ -49,16 +60,12 @@ func NewActor(
 	if actorType == "" {
 		return nil, fmt.Errorf("actor type is required")
 	}
-	if handler == nil {
-		return nil, fmt.Errorf("handler is required")
-	}
 
 	ctx, cancel := context.WithCancel(ctx)
 
 	actor := &Actor{
 		id:        id,
 		actorType: actorType,
-		handler:   handler,
 		ctx:       ctx,
 		ctxCancel: cancel,
 		msgCh:     make(chan Message),
@@ -71,6 +78,14 @@ func NewActor(
 
 	if actor.transport == nil {
 		return nil, fmt.Errorf("transport is required")
+	}
+
+	if actor.handler == nil {
+		return nil, fmt.Errorf("handler is required")
+	}
+
+	if actor.cache == nil {
+		return nil, fmt.Errorf("cache is required")
 	}
 
 	return actor, nil
