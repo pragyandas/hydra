@@ -1,0 +1,131 @@
+package actorsystem
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/actorsystem/cache"
+	"github.com/pragyandas/hydra/transport"
+)
+
+type ActorSystem struct {
+	id        string
+	nc        *nats.Conn
+	js        jetstream.JetStream
+	stream    jetstream.Stream
+	kv        jetstream.KeyValue
+	cache     *cache.Cache
+	config    *Config
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+}
+
+func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	ctx, cancel := context.WithCancel(parentCtx)
+	ctx = context.WithValue(ctx, idKey, config.ID)
+	ctx = context.WithValue(ctx, hostnameKey, config.Hostname)
+
+	nc, err := nats.Connect(config.NatsURL, config.ConnectOpts...)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		nc.Close()
+		cancel()
+		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
+	}
+
+	system := &ActorSystem{
+		id:        config.ID,
+		nc:        nc,
+		js:        js,
+		config:    config,
+		ctx:       ctx,
+		ctxCancel: cancel,
+	}
+
+	if err := system.initialize(ctx); err != nil {
+		system.Close()
+		return nil, err
+	}
+
+	return system, nil
+}
+
+func (as *ActorSystem) initialize(ctx context.Context) error {
+	stream, err := as.js.CreateStream(ctx, as.config.StreamConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create stream: %w", err)
+	}
+	as.stream = stream
+
+	kv, err := as.js.CreateKeyValue(ctx, as.config.KVConfig)
+	if err != nil {
+		if err == jetstream.ErrBucketExists {
+			kv, err = as.js.KeyValue(ctx, as.config.KVConfig.Bucket)
+			if err != nil {
+				return fmt.Errorf("failed to get existing KV store: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to create KV store: %w", err)
+		}
+	}
+	as.kv = kv
+
+	cache, err := cache.NewCache(as.ctx, kv)
+	if err != nil {
+		return fmt.Errorf("failed to create cache: %w", err)
+	}
+	as.cache = cache
+
+	return nil
+}
+
+func (as *ActorSystem) Close() {
+	if as.ctxCancel != nil {
+		as.ctxCancel()
+	}
+
+	if as.cache != nil {
+		as.cache.Close()
+	}
+
+	if as.nc != nil {
+		as.nc.Close()
+	}
+}
+
+func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*transport.ActorTransport, error) {
+	return transport.NewActorTransport(ctx, &transport.Connection{
+		JS:         as.js,
+		KV:         as.kv,
+		StreamName: as.config.StreamConfig.Name,
+	}, a)
+}
+
+func (as *ActorSystem) NewActor(id string, actorType string, handler func([]byte) error) (*actor.Actor, error) {
+	actor, err := actor.NewActor(
+		as.ctx,
+		id,
+		actorType,
+		handler,
+		actor.WithTransport(as.createTransport),
+		actor.WithCache(as.cache),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	actor.Start()
+	return actor, nil
+}
