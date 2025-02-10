@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/transport"
 )
 
 type Cache struct {
@@ -35,7 +36,7 @@ func (c *Cache) GetLocation(actorType, actorID string) (*ActorLocation, error) {
 	// Check cache first
 	c.mu.RLock()
 	// TODO: Review if we should check if the actor is active
-	if loc, ok := c.locations[key]; ok && loc.Active {
+	if loc, ok := c.locations[key]; ok && loc.Status == transport.Active {
 		c.mu.RUnlock()
 		return loc, nil
 	}
@@ -52,7 +53,7 @@ func (c *Cache) GetLocation(actorType, actorID string) (*ActorLocation, error) {
 		return nil, err
 	}
 
-	if !location.Active {
+	if location.Status != transport.Active {
 		return nil, fmt.Errorf("actor is not active")
 	}
 
@@ -102,7 +103,7 @@ func (c *Cache) handleUpdates(key string, watcher jetstream.KeyWatcher) {
 			}
 
 			c.mu.Lock()
-			if location.Active {
+			if location.Status == transport.Active {
 				c.locations[key] = &location
 			} else {
 				delete(c.locations, key)

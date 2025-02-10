@@ -47,7 +47,7 @@ func (t *ActorTransport) Setup() error {
 		Region:      GetRegion(),
 		NodeID:      GetNodeID(),
 		FullSubject: t.subject,
-		Active:      true,
+		Status:      Active,
 		LastActive:  time.Now(),
 	}
 
@@ -95,8 +95,8 @@ func (t *ActorTransport) maintainLiveness(key string, reg ActorRegistration) {
 	for {
 		select {
 		case <-t.ctx.Done():
-			// Mark actor as inactive when stopping
-			reg.Active = false
+			// Mark actor as deactivated when stopping
+			reg.Status = Deactivated
 			reg.LastActive = time.Now()
 			t.conn.KV.Update(context.Background(), key, reg.ToJSON(), t.revision)
 			return

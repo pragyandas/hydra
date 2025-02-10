@@ -86,15 +86,10 @@ func TestActorCommunication(t *testing.T) {
 		t.Errorf("Failed to send message: %v", err)
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			count := receivedCount.Load()
-			t.Logf("Test completed. Received %d messages", count)
-			if count == 0 {
-				t.Error("No messages were received")
-			}
-			return
-		}
+	<-ctx.Done()
+	count := receivedCount.Load()
+	t.Logf("Test completed. Received %d messages", count)
+	if count == 0 {
+		t.Error("No messages were received")
 	}
 }

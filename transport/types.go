@@ -31,9 +31,16 @@ type ActorRegistration struct {
 	Region      string    `json:"region"`
 	NodeID      string    `json:"node_id"`
 	FullSubject string    `json:"full_subject"`
-	Active      bool      `json:"active"`
+	Status      string    `json:"status"`
 	LastActive  time.Time `json:"last_active"`
 }
+
+const (
+	Active       = "active"
+	Activating   = "activating"
+	Deactivating = "deactivating"
+	Deactivated  = "deactivated"
+)
 
 func (r ActorRegistration) ToJSON() []byte {
 	data, _ := json.Marshal(r)
