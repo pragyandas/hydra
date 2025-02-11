@@ -1,2 +1,11 @@
 # Hydra
-A distributed, location-independent actor system with transparent addressing and virtual actors to deliver seamless scalability and robust resilience.
+Hydra is an actor framework for Go to build resilient applications with location-transparent messaging, automatic scaling, and fault tolerance - powered by NATS ⚡
+
+## Features
+- Location-independent actors
+- Transparent addressing
+- Virtual actors
+- Seamless scalability
+- Robust resilience
+- Powered by NATS
+
