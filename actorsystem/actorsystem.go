@@ -17,10 +17,10 @@ type ActorSystem struct {
 	js        jetstream.JetStream
 	stream    jetstream.Stream
 	kv        jetstream.KeyValue
-	cache     *cache.Cache
 	config    *Config
 	ctx       context.Context
 	ctxCancel context.CancelFunc
+	cache     *cache.Cache
 }
 
 func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
@@ -82,7 +82,7 @@ func (as *ActorSystem) initialize(ctx context.Context) error {
 	}
 	as.kv = kv
 
-	cache, err := cache.NewCache(as.ctx, kv)
+	cache, err := cache.NewCache(ctx, as.kv)
 	if err != nil {
 		return fmt.Errorf("failed to create cache: %w", err)
 	}
@@ -110,7 +110,7 @@ func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*tr
 		JS:         as.js,
 		KV:         as.kv,
 		StreamName: as.config.StreamConfig.Name,
-	}, a)
+	}, GetKVBucket(), a)
 }
 
 func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
@@ -118,6 +118,7 @@ func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory acto
 		as.ctx,
 		id,
 		actorType,
+		GetStreamName(),
 		actor.WithHandlerFactory(handlerFactory),
 		actor.WithTransport(as.createTransport),
 		actor.WithCache(as.cache),
@@ -135,6 +136,7 @@ func (as *ActorSystem) NewActorWithHandler(id string, actorType string, handler 
 		as.ctx,
 		id,
 		actorType,
+		GetStreamName(),
 		actor.WithHandler(handler),
 		actor.WithTransport(as.createTransport),
 		actor.WithCache(as.cache),
