@@ -1,6 +1,8 @@
 package actorsystem
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -23,14 +25,13 @@ func DefaultConfig() *Config {
 		Hostname: "hostname",
 		NatsURL:  nats.DefaultURL,
 		StreamConfig: jetstream.StreamConfig{
-			Name:     "actorsystem-stream",
-			Subjects: []string{"actors.>"},
+			Name:     GetStreamName(),
+			Subjects: []string{fmt.Sprintf("%s.>", GetStreamName())},
 			Storage:  jetstream.MemoryStorage,
 		},
 		KVConfig: jetstream.KeyValueConfig{
-			Bucket:      "actors",
-			Description: "Actor location store",
-			TTL:         30 * time.Second,
+			Bucket:      GetKVBucket(),
+			Description: "Actor data store",
 			Storage:     jetstream.FileStorage,
 		},
 		RetryInterval: 5 * time.Second,
@@ -45,3 +46,22 @@ const (
 	idKey       = contextKey("id")
 	hostnameKey = contextKey("hostname")
 )
+
+const (
+	EnvStreamName = "ACTORS_STREAM"
+	EnvKVBucket   = "ACTORS_KV_BUCKET"
+)
+
+func GetStreamName() string {
+	if envStream := os.Getenv(EnvStreamName); envStream != "" {
+		return envStream
+	}
+	return "actorstream"
+}
+
+func GetKVBucket() string {
+	if envKVBucket := os.Getenv(EnvKVBucket); envKVBucket != "" {
+		return envKVBucket
+	}
+	return "actorstore"
+}
