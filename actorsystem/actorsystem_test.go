@@ -3,6 +3,7 @@ package actorsystem
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,11 +15,14 @@ import (
 )
 
 func TestActorCommunication(t *testing.T) {
+	numActors := 1
+
 	opts := &server.Options{
-		Port:      -1, // Use random port
-		Host:      "127.0.0.1",
-		JetStream: true,
-		StoreDir:  t.TempDir(),
+		Port:       -1, // Use random port
+		Host:       "127.0.0.1",
+		JetStream:  true,
+		MaxPayload: 8 * 1024 * 1024, // 8MB
+		StoreDir:   t.TempDir(),
 	}
 	ns := natsd.RunServer(opts)
 	if ns == nil {
@@ -34,17 +38,17 @@ func TestActorCommunication(t *testing.T) {
 		ID:      "test-system",
 		NatsURL: ns.ClientURL(), // Use embedded server URL
 		StreamConfig: jetstream.StreamConfig{
-			Name:     "test-stream",
-			Subjects: []string{"actors.>"},
+			Name:     GetStreamName(),
+			Subjects: []string{fmt.Sprintf("%s.>", GetStreamName())},
 			Storage:  jetstream.MemoryStorage,
 		},
 		KVConfig: jetstream.KeyValueConfig{
-			Bucket:      "test-coordination",
-			Description: "Test coordination",
-			TTL:         30 * time.Second,
-			Storage:     jetstream.MemoryStorage,
+			Bucket:      GetKVBucket(),
+			Description: "Actor data store",
+			Storage:     jetstream.FileStorage,
 		},
-		Hostname: "test-node",
+		RetryInterval: 100 * time.Millisecond,
+		Hostname:      "test-node",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -59,32 +63,53 @@ func TestActorCommunication(t *testing.T) {
 
 	pingHandler := func(self *actor.Actor) actor.Handler {
 		return func(msg []byte) error {
-			fmt.Println("ping received message", string(msg))
-			return self.SendMessage("pong", "pong", msg)
+			receivedCount.Add(1)
+			return self.SendMessage("pong", self.ID(), msg)
 		}
 	}
 
 	pongHandler := func(self *actor.Actor) actor.Handler {
 		return func(msg []byte) error {
 			receivedCount.Add(1)
-			fmt.Println("pong received message", string(msg))
-			return self.SendMessage("ping", "ping", msg)
+			return self.SendMessage("ping", self.ID(), msg)
 		}
 	}
 
-	pingActor, err := system.NewActor("ping", "ping", pingHandler)
-	if err != nil {
-		t.Fatalf("Failed to create ping actor: %v", err)
+	// Create array to store ping actors
+	var pingActors []*actor.Actor
+
+	// Create numActors ping actors and store them in array
+	for i := 0; i < numActors; i++ {
+		pingActor, err := system.NewActor(fmt.Sprintf("%d", i), "ping", pingHandler)
+		if err != nil {
+			t.Fatalf("Failed to create ping actor %d: %v", i, err)
+		}
+		pingActors = append(pingActors, pingActor)
 	}
 
-	_, err = system.NewActor("pong", "pong", pongHandler)
-	if err != nil {
-		t.Fatalf("Failed to create pong actor: %v", err)
+	// Create numActors pong actors
+	for i := 0; i < numActors; i++ {
+		_, err := system.NewActor(fmt.Sprintf("%d", i), "pong", pongHandler)
+		if err != nil {
+			t.Fatalf("Failed to create pong actor %d: %v", i, err)
+		}
 	}
 
-	if err := pingActor.SendMessage("pong", "pong", []byte(fmt.Sprintf("ping-%d", time.Now().Unix()))); err != nil {
-		t.Errorf("Failed to send message: %v", err)
+	// Have each ping actor send a message to corresponding pong actor in parallel
+	var wg sync.WaitGroup
+	wg.Add(numActors)
+	for i := 0; i < numActors; i++ {
+		go func(i int) {
+			defer wg.Done()
+			pongActor := pingActors[i].ID()
+			msg := []byte(fmt.Sprintf("ping-%d-%d", i, time.Now().UnixNano()))
+
+			if err := pingActors[i].SendMessage("pong", pongActor, msg); err != nil {
+				t.Errorf("Failed to send message from ping-%d to %s: %v", i, pongActor, err)
+			}
+		}(i)
 	}
+	wg.Wait()
 
 	<-ctx.Done()
 	count := receivedCount.Load()
