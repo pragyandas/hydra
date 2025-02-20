@@ -9,15 +9,14 @@ import (
 )
 
 type Actor struct {
-	id                string
-	actorType         string
-	messageStreamName string
-	handler           Handler
-	ctx               context.Context
-	ctxCancel         context.CancelFunc
-	msgCh             chan Message
-	transport         *ActorTransport
-	cache             *cache.Cache
+	id        string
+	actorType string
+	handler   Handler
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	msgCh     chan Message
+	transport *ActorTransport
+	cache     *cache.Cache
 }
 
 func WithHandlerFactory(factory HandlerFactory) ActorOption {
@@ -53,7 +52,6 @@ func NewActor(
 	ctx context.Context,
 	id string,
 	actorType string,
-	messageStreamName string,
 	opts ...ActorOption,
 ) (*Actor, error) {
 	if id == "" {
@@ -66,12 +64,11 @@ func NewActor(
 	ctx, cancel := context.WithCancel(ctx)
 
 	actor := &Actor{
-		id:                id,
-		actorType:         actorType,
-		messageStreamName: messageStreamName,
-		ctx:               ctx,
-		ctxCancel:         cancel,
-		msgCh:             make(chan Message),
+		id:        id,
+		actorType: actorType,
+		ctx:       ctx,
+		ctxCancel: cancel,
+		msgCh:     make(chan Message),
 	}
 
 	// Apply options
@@ -134,10 +131,8 @@ func (a *Actor) Type() string {
 }
 
 func (a *Actor) SendMessage(actorType string, actorID string, message []byte) error {
-	subject := fmt.Sprintf("%s.%s.%s", a.messageStreamName, actorType, actorID)
-
-	if err := a.transport.SendMessage(a.ctx, subject, message); err != nil {
-		return fmt.Errorf("failed to send message to actor %s: %w", subject, err)
+	if err := a.transport.SendMessage(a.ctx, actorType, actorID, message); err != nil {
+		return fmt.Errorf("failed to send message to actor %s: %w", actorID, err)
 	}
 
 	return nil

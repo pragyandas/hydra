@@ -112,7 +112,7 @@ func (t *ActorTransport) maintainLiveness(key string, reg ActorRegistration) {
 	}
 }
 
-func (t *ActorTransport) SendMessage(ctx context.Context, subject string, msg []byte) error {
+func (t *ActorTransport) SendMessage(ctx context.Context, actorType string, actorID string, msg []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -120,6 +120,8 @@ func (t *ActorTransport) SendMessage(ctx context.Context, subject string, msg []
 	headers.Set("message-id", nuid.Next())
 	headers.Set("sender-id", fmt.Sprintf("%s.%s", t.actor.Type(), t.actor.ID()))
 	headers.Set("msg-timestamp", time.Now().UTC().Format(time.RFC3339))
+
+	subject := fmt.Sprintf("%s.%s.%s", t.conn.StreamName, actorType, actorID)
 
 	natsMsg := nats.NewMsg(subject)
 	natsMsg.Header = headers
