@@ -15,17 +15,19 @@ type ActorTransport struct {
 	actor    Actor
 	subject  string
 	revision uint64
+	kvBucket string
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
-func NewActorTransport(ctx context.Context, conn *Connection, actor Actor) (*ActorTransport, error) {
+func NewActorTransport(ctx context.Context, conn *Connection, kvBucket string, actor Actor) (*ActorTransport, error) {
 	transportCtx, cancel := context.WithCancel(ctx)
 	return &ActorTransport{
-		conn:   conn,
-		actor:  actor,
-		ctx:    transportCtx,
-		cancel: cancel,
+		conn:     conn,
+		actor:    actor,
+		kvBucket: kvBucket,
+		ctx:      transportCtx,
+		cancel:   cancel,
 	}, nil
 }
 
@@ -35,23 +37,21 @@ func (t *ActorTransport) Setup() error {
 	defer cancel()
 
 	// Create the actor registration in KV store
-	key := fmt.Sprintf("actors/%s/%s", t.actor.Type(), t.actor.ID())
-	t.subject = fmt.Sprintf("actors.%s.%s.%s.%s",
+	key := fmt.Sprintf("%s/%s/%s", t.kvBucket, t.actor.Type(), t.actor.ID())
+
+	t.subject = fmt.Sprintf("%s.%s.%s",
+		t.conn.StreamName,
 		t.actor.Type(),
 		t.actor.ID(),
-		GetRegion(),
-		GetNodeID(),
 	)
 
 	value := ActorRegistration{
-		Region:      GetRegion(),
-		NodeID:      GetNodeID(),
-		FullSubject: t.subject,
-		Status:      Active,
-		LastActive:  time.Now(),
+		Region:     GetRegion(),
+		Subject:    t.subject,
+		Active:     true,
+		LastActive: time.Now(),
 	}
 
-	// Use setupCtx instead of t.ctx for the KV operation
 	revision, err := t.conn.KV.Create(setupCtx, key, value.ToJSON())
 	if err != nil {
 		return fmt.Errorf("failed to claim actor: %w", err)
@@ -96,7 +96,7 @@ func (t *ActorTransport) maintainLiveness(key string, reg ActorRegistration) {
 		select {
 		case <-t.ctx.Done():
 			// Mark actor as deactivated when stopping
-			reg.Status = Deactivated
+			reg.Active = false
 			reg.LastActive = time.Now()
 			t.conn.KV.Update(context.Background(), key, reg.ToJSON(), t.revision)
 			return

@@ -28,19 +28,11 @@ type Connection struct {
 }
 
 type ActorRegistration struct {
-	Region      string    `json:"region"`
-	NodeID      string    `json:"node_id"`
-	FullSubject string    `json:"full_subject"`
-	Status      string    `json:"status"`
-	LastActive  time.Time `json:"last_active"`
+	Region     string    `json:"region"`
+	Subject    string    `json:"subject"`
+	Active     bool      `json:"active"`
+	LastActive time.Time `json:"last_active"`
 }
-
-const (
-	Active       = "active"
-	Activating   = "activating"
-	Deactivating = "deactivating"
-	Deactivated  = "deactivated"
-)
 
 func (r ActorRegistration) ToJSON() []byte {
 	data, _ := json.Marshal(r)
@@ -48,11 +40,8 @@ func (r ActorRegistration) ToJSON() []byte {
 }
 
 const (
-	EnvRegion = "REGION"
-	EnvNodeID = "NODE_ID"
-
+	EnvRegion     = "REGION"
 	DefaultRegion = "local"
-	DefaultNodeID = "local"
 )
 
 // GetRegion returns the region from env var or "local"
@@ -61,12 +50,4 @@ func GetRegion() string {
 		return region
 	}
 	return DefaultRegion
-}
-
-// GetNodeID returns the node ID from env var or "local"
-func GetNodeID() string {
-	if nodeID := os.Getenv(EnvNodeID); nodeID != "" {
-		return nodeID
-	}
-	return DefaultNodeID
 }
