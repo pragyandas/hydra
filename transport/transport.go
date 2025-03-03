@@ -15,17 +15,19 @@ type ActorTransport struct {
 	actor    Actor
 	subject  string
 	revision uint64
-	kvBucket string
+	getKVKey GetKVKey
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
-func NewActorTransport(ctx context.Context, conn *Connection, kvBucket string, actor Actor) (*ActorTransport, error) {
+type GetKVKey func(actorType, actorID string) string
+
+func NewActorTransport(ctx context.Context, conn *Connection, getKVKey GetKVKey, actor Actor) (*ActorTransport, error) {
 	transportCtx, cancel := context.WithCancel(ctx)
 	return &ActorTransport{
 		conn:     conn,
 		actor:    actor,
-		kvBucket: kvBucket,
+		getKVKey: getKVKey,
 		ctx:      transportCtx,
 		cancel:   cancel,
 	}, nil
@@ -37,7 +39,7 @@ func (t *ActorTransport) Setup() error {
 	defer cancel()
 
 	// Create the actor registration in KV store
-	key := fmt.Sprintf("%s/%s/%s", t.kvBucket, t.actor.Type(), t.actor.ID())
+	key := t.getKVKey(t.actor.Type(), t.actor.ID())
 
 	t.subject = fmt.Sprintf("%s.%s.%s",
 		t.conn.StreamName,
@@ -48,7 +50,6 @@ func (t *ActorTransport) Setup() error {
 	value := ActorRegistration{
 		Region:     GetRegion(),
 		Subject:    t.subject,
-		Active:     true,
 		LastActive: time.Now(),
 	}
 
@@ -95,10 +96,6 @@ func (t *ActorTransport) maintainLiveness(key string, reg ActorRegistration) {
 	for {
 		select {
 		case <-t.ctx.Done():
-			// Mark actor as deactivated when stopping
-			reg.Active = false
-			reg.LastActive = time.Now()
-			t.conn.KV.Update(context.Background(), key, reg.ToJSON(), t.revision)
 			return
 
 		case <-ticker.C:

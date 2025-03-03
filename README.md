@@ -7,3 +7,14 @@ Hydra is an opinionated highly configurable massively scalable actor framework f
 - Seamless scalability
 - Robust resilience
 - Highly configurable
+
+
+## Testing
+
+```
+go test -v ./actorsystem -test.duration=10s
+```
+
+
+
+

@@ -30,7 +30,6 @@ type Connection struct {
 type ActorRegistration struct {
 	Region     string    `json:"region"`
 	Subject    string    `json:"subject"`
-	Active     bool      `json:"active"`
 	LastActive time.Time `json:"last_active"`
 }
 

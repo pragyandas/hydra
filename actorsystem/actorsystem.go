@@ -8,6 +8,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/actor"
 	"github.com/pragyandas/hydra/actorsystem/cache"
+	"github.com/pragyandas/hydra/controlplane"
 	"github.com/pragyandas/hydra/transport"
 )
 
@@ -18,6 +19,7 @@ type ActorSystem struct {
 	stream    jetstream.Stream
 	kv        jetstream.KeyValue
 	config    *Config
+	cp        *controlplane.ControlPlane
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 	cache     *cache.Cache
@@ -30,7 +32,6 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	ctx = context.WithValue(ctx, idKey, config.ID)
-	ctx = context.WithValue(ctx, hostnameKey, config.Hostname)
 
 	nc, err := nats.Connect(config.NatsURL, config.ConnectOpts...)
 	if err != nil {
@@ -63,16 +64,16 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 }
 
 func (as *ActorSystem) initialize(ctx context.Context) error {
-	stream, err := as.js.CreateStream(ctx, as.config.StreamConfig)
+	stream, err := as.js.CreateStream(ctx, as.config.MessageStreamConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	as.stream = stream
 
-	kv, err := as.js.CreateKeyValue(ctx, as.config.KVConfig)
+	kv, err := as.js.CreateKeyValue(ctx, as.config.ActorKVConfig)
 	if err != nil {
 		if err == jetstream.ErrBucketExists {
-			kv, err = as.js.KeyValue(ctx, as.config.KVConfig.Bucket)
+			kv, err = as.js.KeyValue(ctx, as.config.ActorKVConfig.Bucket)
 			if err != nil {
 				return fmt.Errorf("failed to get existing KV store: %w", err)
 			}
@@ -81,6 +82,15 @@ func (as *ActorSystem) initialize(ctx context.Context) error {
 		}
 	}
 	as.kv = kv
+
+	as.cp, err = controlplane.New(as.config.ID, as.config.Region, as.js)
+	if err != nil {
+		return fmt.Errorf("failed to create control plane: %w", err)
+	}
+
+	if err := as.cp.Start(ctx, as.config.ControlPlaneConfig); err != nil {
+		return fmt.Errorf("failed to start control plane: %w", err)
+	}
 
 	cache, err := cache.NewCache(ctx, as.kv)
 	if err != nil {
@@ -100,6 +110,10 @@ func (as *ActorSystem) Close() {
 		as.cache.Close()
 	}
 
+	if as.cp != nil {
+		as.cp.Stop()
+	}
+
 	if as.nc != nil {
 		as.nc.Close()
 	}
@@ -109,8 +123,11 @@ func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*tr
 	return transport.NewActorTransport(ctx, &transport.Connection{
 		JS:         as.js,
 		KV:         as.kv,
-		StreamName: as.config.StreamConfig.Name,
-	}, GetKVBucket(), a)
+		StreamName: as.config.MessageStreamConfig.Name,
+	}, func(actorType, actorID string) string {
+		actorBucket := as.cp.GetBucketKey(actorType, actorID)
+		return fmt.Sprintf("%s/%s", as.config.ActorKVConfig.Bucket, actorBucket)
+	}, a)
 }
 
 func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
