@@ -131,6 +131,7 @@ func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*tr
 }
 
 func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
+	// TODO: Do not send context to the actor
 	actor, err := actor.NewActor(
 		as.ctx,
 		id,
@@ -143,6 +144,8 @@ func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory acto
 		return nil, err
 	}
 
+	// TODO: Somehow send actor system context to the actor
+	// If actor system context is cancelled, the actor should be cancelled
 	actor.Start()
 	return actor, nil
 }

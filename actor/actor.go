@@ -92,6 +92,7 @@ func NewActor(
 }
 
 func (a *Actor) Start() {
+	// TODO: Should accept a context and cancel the actor when the context is done
 	go a.processMessages()
 	if err := a.transport.Setup(); err != nil {
 		log.Printf("Failed to start transport for actor %s: %v", a.id, err)
