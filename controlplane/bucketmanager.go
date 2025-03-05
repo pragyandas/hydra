@@ -6,44 +6,38 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
-	"sort"
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-type BucketOwnership struct {
-	Owner     string    `json:"owner"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type BucketManagerConfig struct {
-	NumBuckets          int
-	SafetyCheckInterval time.Duration
-	KVConfig            jetstream.KeyValueConfig
-}
-
 type BucketManager struct {
-	systemID     string
-	region       string
-	numBuckets   int
-	membership   *Membership
-	ownedBuckets map[int]struct{}
-	js           jetstream.JetStream
-	kv           jetstream.KeyValue
-	mu           sync.RWMutex
-	wg           sync.WaitGroup
-	done         chan struct{}
+	systemID        string
+	region          string
+	numBuckets      int
+	membership      *Membership
+	ownedBuckets    map[int]*BucketOwnership
+	nc              *nats.Conn
+	js              jetstream.JetStream
+	kv              jetstream.KeyValue
+	mu              sync.RWMutex
+	wg              sync.WaitGroup
+	done            chan struct{}
+	interestSub     *nats.Subscription
+	discoveryTicker *time.Ticker
+	claimMu         sync.Mutex
 }
 
-func NewBucketManager(systemID, region string, js jetstream.JetStream, membership *Membership) *BucketManager {
+func NewBucketManager(systemID, region string, nc *nats.Conn, js jetstream.JetStream, membership *Membership) *BucketManager {
 	return &BucketManager{
 		systemID:     systemID,
 		region:       region,
-		js:           js,
 		membership:   membership,
-		ownedBuckets: make(map[int]struct{}),
+		ownedBuckets: make(map[int]*BucketOwnership),
+		nc:           nc,
+		js:           js,
 		done:         make(chan struct{}),
 	}
 }
@@ -51,6 +45,7 @@ func NewBucketManager(systemID, region string, js jetstream.JetStream, membershi
 func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) error {
 	bm.numBuckets = config.NumBuckets
 
+	// Initialize KV store
 	kv, err := bm.js.CreateKeyValue(ctx, config.KVConfig)
 	if err != nil {
 		if err == jetstream.ErrBucketExists {
@@ -64,30 +59,51 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 	}
 	bm.kv = kv
 
-	// Start the membership listener
+	// Subscribe to bucket interest messages
+	if err := bm.setupBucketInterestSubscription(ctx); err != nil {
+		return fmt.Errorf("failed to setup bucket interest subscription: %w", err)
+	}
+
+	// Start periodic bucket safety check
 	bm.wg.Add(1)
 	go func() {
 		defer bm.wg.Done()
-		bm.watchMembershipChanges(ctx)
+		bm.bucketDiscoveryLoop(ctx, config.SafetyCheckInterval)
 	}()
 
-	// Start the safety check loop
-	bm.wg.Add(1)
-	go func() {
-		defer bm.wg.Done()
-		bm.safetyCheckLoop(ctx, config.SafetyCheckInterval)
-	}()
-
-	// Perform initial bucket calculation
-	return bm.RecalculateBuckets(ctx)
+	return nil
 }
 
 func (bm *BucketManager) Stop() {
+	if bm.discoveryTicker != nil {
+		bm.discoveryTicker.Stop()
+	}
+	if bm.interestSub != nil {
+		bm.interestSub.Unsubscribe()
+	}
 	close(bm.done)
 	bm.wg.Wait()
 }
 
-func (bm *BucketManager) safetyCheckLoop(ctx context.Context, interval time.Duration) {
+func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) error {
+	// TODO: Make the nc subject configurable
+	sub, err := bm.nc.Subscribe(fmt.Sprintf("bucketinterest.%s.%s", bm.region, bm.systemID), func(msg *nats.Msg) {
+		var interest BucketInterest
+		if err := json.Unmarshal(msg.Data, &interest); err != nil {
+			log.Printf("failed to unmarshal bucket interest: %v", err)
+			return
+		}
+		bm.handleInterest(ctx, &interest)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to bucket interest: %w", err)
+	}
+	bm.interestSub = sub
+	return nil
+}
+
+func (bm *BucketManager) bucketDiscoveryLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -98,47 +114,30 @@ func (bm *BucketManager) safetyCheckLoop(ctx context.Context, interval time.Dura
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := bm.performSafetyCheck(ctx); err != nil {
-				log.Printf("safety check failed: %v", err)
-			}
+			bm.RecalculateBuckets(ctx)
 		}
 	}
 }
 
-func (bm *BucketManager) performSafetyCheck(ctx context.Context) error {
-	orphanBuckets := bm.findOrphanedBuckets(ctx)
-	if len(orphanBuckets) > 0 {
-		return bm.tryClaimBuckets(ctx, orphanBuckets)
+func (bm *BucketManager) RecalculateBuckets(ctx context.Context) {
+	eligibleBuckets := bm.getEligibleBuckets()
+
+	if len(eligibleBuckets) > 0 {
+		bm.tryClaimBuckets(ctx, eligibleBuckets)
 	}
-	return nil
 }
 
-func (bm *BucketManager) findOrphanedBuckets(ctx context.Context) []int {
-	currentMembers := bm.membership.GetMembers()
-	eligibleBuckets := bm.getEligibleBuckets(currentMembers)
-
-	orphans := []int{}
-	for _, bucket := range eligibleBuckets {
-		ownership, err := bm.getBucketOwnership(ctx, bucket)
-		if err != nil || ownership == nil || currentMembers[ownership.Owner] == nil {
-			orphans = append(orphans, bucket)
-		}
+func (bm *BucketManager) getEligibleBuckets() []int {
+	memberCount, selfIndex := bm.membership.GetMemberPosition()
+	if selfIndex == -1 {
+		log.Printf("warning: couldn't find self in member list")
+		return nil
 	}
-	return orphans
-}
 
-func (bm *BucketManager) getEligibleBuckets(members map[string]*MemberInfo) []int {
-	buckets := []int{}
-
-	// Get sorted list of members for consistent assignment
-	memberIDs := make([]string, 0, len(members))
-	for id := range members {
-		memberIDs = append(memberIDs, id)
-	}
-	sort.Strings(memberIDs)
-
+	buckets := make([]int, 0)
+	// Calculate which buckets belong to us based on our index
 	for bucket := 0; bucket < bm.numBuckets; bucket++ {
-		if len(memberIDs) == 0 || memberIDs[bucket%len(memberIDs)] == bm.systemID {
+		if bucket%memberCount == selfIndex {
 			buckets = append(buckets, bucket)
 		}
 	}
@@ -146,26 +145,18 @@ func (bm *BucketManager) getEligibleBuckets(members map[string]*MemberInfo) []in
 	return buckets
 }
 
-func (bm *BucketManager) getBucketOwnership(ctx context.Context, bucket int) (*BucketOwnership, error) {
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
-	entry, err := bm.kv.Get(ctx, key)
-	if err == jetstream.ErrKeyNotFound {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
+func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
+	// We should make sure only one instance of this is running
+	if !bm.claimMu.TryLock() {
+		log.Printf("another instance of this is already running")
+		return
 	}
 
-	var ownership BucketOwnership
-	if err := json.Unmarshal(entry.Value(), &ownership); err != nil {
-		return nil, err
-	}
-	return &ownership, nil
-}
+	defer bm.claimMu.Unlock()
 
-func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(buckets))
+	// Tweak claim concurrency by changing the number of semaphore tokens
 	semaphore := make(chan struct{}, 10)
 
 	for _, bucket := range buckets {
@@ -188,7 +179,6 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) err
 		}(bucket)
 	}
 
-	// Wait for completion or context cancellation
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -197,45 +187,26 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) err
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		log.Printf("bucket claim operation cancelled: %v", ctx.Err())
 	case <-done:
 		close(errChan)
 	}
 
-	// Collect errors
 	var errors []error
 	for err := range errChan {
 		errors = append(errors, err)
 	}
 
-	// if len(errors) > 0 {
-	// 	return fmt.Errorf("bucket claim errors: %v", errors)
-	// }
-	return nil
+	if len(errors) > 0 {
+		log.Printf("some bucket claims failed: %v", errors)
+	}
 }
 
 func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
-
-	entry, existsErr := bm.kv.Get(ctx, key)
-	if existsErr != nil && existsErr != jetstream.ErrKeyNotFound {
-		return existsErr
-	}
-
-	if existsErr != jetstream.ErrKeyNotFound {
-		var currentOwnership BucketOwnership
-		if err := json.Unmarshal(entry.Value(), &currentOwnership); err != nil {
-			return err
-		}
-
-		if member := bm.membership.GetMembers()[currentOwnership.Owner]; member != nil {
-			return fmt.Errorf("bucket already owned by active member: %s", currentOwnership.Owner)
-		}
-	}
-
-	ownership := BucketOwnership{
-		Owner:     bm.systemID,
-		Timestamp: time.Now(),
+	ownership := &BucketOwnership{
+		Owner:          bm.systemID,
+		LastUpdateTime: time.Now(),
 	}
 
 	data, err := json.Marshal(ownership)
@@ -243,42 +214,100 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 		return err
 	}
 
-	if existsErr == jetstream.ErrKeyNotFound {
-		if _, err := bm.kv.Create(ctx, key, data); err != nil {
-			return err
-		}
-	} else {
-		if _, err := bm.kv.Update(ctx, key, data, entry.Revision()); err != nil {
-			return err
-		}
+	// Try to create first
+	_, err = bm.kv.Create(ctx, key, data)
+	if err == nil {
+		bm.mu.Lock()
+		bm.ownedBuckets[bucket] = ownership
+		bm.mu.Unlock()
+		return nil
+	}
+
+	// If the bucket already exists, check if the owner is still active
+	if err != jetstream.ErrKeyExists {
+		return err
+	}
+
+	// Check current ownership
+	entry, err := bm.kv.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	var currentOwnership BucketOwnership
+	if err := json.Unmarshal(entry.Value(), &currentOwnership); err != nil {
+		return err
+	}
+
+	// If the owner is still active, send claim interest message to the owner
+	if !bm.isOwnerInactive(currentOwnership.Owner) {
+		bm.publishInterest(bucket, currentOwnership.Owner)
+		return nil
+	}
+
+	// Claim the bucket
+	_, err = bm.kv.Update(ctx, key, data, entry.Revision())
+	if err != nil {
+		return err
 	}
 
 	bm.mu.Lock()
-	bm.ownedBuckets[bucket] = struct{}{}
+	bm.ownedBuckets[bucket] = ownership
 	bm.mu.Unlock()
-
 	return nil
 }
 
-func (bm *BucketManager) RecalculateBuckets(ctx context.Context) error {
-	orphans := bm.findOrphanedBuckets(ctx)
+func (bm *BucketManager) isOwnerInactive(owner string) bool {
+	return !bm.membership.IsMemberActive(owner)
+}
 
-	bm.mu.Lock()
-	bm.ownedBuckets = make(map[int]struct{})
-	bm.mu.Unlock()
+func (bm *BucketManager) handleInterest(ctx context.Context, interest *BucketInterest) {
+	bm.mu.RLock()
+	owns := bm.ownedBuckets[interest.BucketID] != nil
+	ownedCount := len(bm.ownedBuckets)
+	bm.mu.RUnlock()
 
-	if len(orphans) > 0 {
-		if err := bm.tryClaimBuckets(ctx, orphans); err != nil {
-			return err
-		}
+	if !owns {
+		return
 	}
 
-	return nil
+	memberCount, _ := bm.membership.GetMemberPosition()
+
+	fairShare := float64(bm.numBuckets) / float64(memberCount)
+	// TODO: Make this configurable
+	maxBuckets := int(fairShare * 1.1) // 10% over fair shares
+
+	if ownedCount > maxBuckets {
+		bm.releaseBucket(ctx, interest.BucketID)
+	}
 }
 
-func (bm *BucketManager) OwnsBucket(bucket int) bool {
-	_, owns := bm.ownedBuckets[bucket]
-	return owns
+func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
+	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
+	err := bm.kv.Delete(ctx, key)
+	if err != nil {
+		log.Printf("failed to delete bucket %d: %v", bucket, err)
+		return
+	}
+
+	bm.mu.Lock()
+	delete(bm.ownedBuckets, bucket)
+	bm.mu.Unlock()
+}
+
+func (bm *BucketManager) publishInterest(bucketID int, owner string) error {
+	msg := &BucketInterest{
+		BucketID:  bucketID,
+		FromNode:  bm.systemID,
+		Timestamp: time.Now(),
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return bm.nc.Publish(fmt.Sprintf("bucketinterest.%s.%s", bm.region, owner), data)
 }
 
 func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
@@ -287,25 +316,8 @@ func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
 	return int(h.Sum32()) % bm.numBuckets
 }
 
-// Transport uses this to store actor data in the KV store
+// Transport uses this to store actor metadata in the KV store
 func (bm *BucketManager) GetBucketKey(actorType, actorID string) string {
 	bucket := bm.calculateBucket(actorType, actorID)
 	return fmt.Sprintf("%s/%d/%s/%s", bm.region, bucket, actorType, actorID)
-}
-
-func (bm *BucketManager) watchMembershipChanges(ctx context.Context) {
-	membersChan := bm.membership.GetMembersChannel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-bm.done:
-			return
-		case <-membersChan:
-			if err := bm.RecalculateBuckets(ctx); err != nil {
-				log.Printf("failed to recalculate buckets: %v", err)
-			}
-		}
-	}
 }

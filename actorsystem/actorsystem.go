@@ -83,7 +83,7 @@ func (as *ActorSystem) initialize(ctx context.Context) error {
 	}
 	as.kv = kv
 
-	as.cp, err = controlplane.New(as.config.ID, as.config.Region, as.js)
+	as.cp, err = controlplane.New(as.config.ID, as.config.Region, as.nc, as.js)
 	if err != nil {
 		return fmt.Errorf("failed to create control plane: %w", err)
 	}

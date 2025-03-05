@@ -4,12 +4,14 @@ import (
 	"context"
 	"sync"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 type ControlPlane struct {
 	systemID          string
 	region            string
+	nc                *nats.Conn
 	js                jetstream.JetStream
 	membership        *Membership
 	bucketManager     *BucketManager
@@ -23,10 +25,11 @@ type Config struct {
 	BucketManagerConfig BucketManagerConfig
 }
 
-func New(systemID, region string, js jetstream.JetStream) (*ControlPlane, error) {
+func New(systemID, region string, nc *nats.Conn, js jetstream.JetStream) (*ControlPlane, error) {
 	cp := &ControlPlane{
 		systemID:          systemID,
 		region:            region,
+		nc:                nc,
 		js:                js,
 		done:              make(chan struct{}),
 		membershipChanged: make(chan struct{}, 1), // Buffered channel to avoid blocking
@@ -34,7 +37,7 @@ func New(systemID, region string, js jetstream.JetStream) (*ControlPlane, error)
 
 	cp.membership = NewMembership(systemID, region, js, cp.membershipChanged)
 
-	cp.bucketManager = NewBucketManager(systemID, region, js, cp.membership)
+	cp.bucketManager = NewBucketManager(systemID, region, nc, js, cp.membership)
 
 	return cp, nil
 }
