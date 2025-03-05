@@ -120,14 +120,17 @@ func (as *ActorSystem) Close() {
 }
 
 func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*transport.ActorTransport, error) {
+
+	getKVKey := func(actorType, actorID string) string {
+		actorBucket := as.cp.GetBucketKey(actorType, actorID)
+		return fmt.Sprintf("%s/%s", as.config.ActorKVConfig.Bucket, actorBucket)
+	}
+
 	return transport.NewActorTransport(ctx, &transport.Connection{
 		JS:         as.js,
 		KV:         as.kv,
 		StreamName: as.config.MessageStreamConfig.Name,
-	}, func(actorType, actorID string) string {
-		actorBucket := as.cp.GetBucketKey(actorType, actorID)
-		return fmt.Sprintf("%s/%s", as.config.ActorKVConfig.Bucket, actorBucket)
-	}, a)
+	}, getKVKey, a)
 }
 
 func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
