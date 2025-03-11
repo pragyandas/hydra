@@ -7,6 +7,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/common"
 	"github.com/pragyandas/hydra/controlplane"
 )
 
@@ -23,8 +24,8 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		ID:      GetSystemID(),
-		Region:  GetRegion(),
+		ID:      common.GetSystemID(),
+		Region:  common.GetRegion(),
 		NatsURL: nats.DefaultURL,
 		MessageStreamConfig: jetstream.StreamConfig{
 			Name:     GetStreamName(),
@@ -69,27 +70,11 @@ const (
 )
 
 const (
-	EnvSystemID                = "SYSTEM_ID"
-	EnvRegion                  = "REGION"
 	EnvStreamName              = "ACTORS_STREAM"
 	EnvKVBucket                = "ACTORS_KV_BUCKET"
 	EnvMembershipKVBucket      = "ACTORS_MEMBERSHIP_KV_BUCKET"
 	EnvBucketOwnershipKVBucket = "ACTORS_BUCKET_OWNERSHIP_KV_BUCKET"
 )
-
-func GetSystemID() string {
-	if envSystemID := os.Getenv(EnvSystemID); envSystemID != "" {
-		return envSystemID
-	}
-	return "actorsystem"
-}
-
-func GetRegion() string {
-	if envRegion := os.Getenv(EnvRegion); envRegion != "" {
-		return envRegion
-	}
-	return "local"
-}
 
 func GetStreamName() string {
 	if envStream := os.Getenv(EnvStreamName); envStream != "" {

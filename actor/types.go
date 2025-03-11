@@ -3,7 +3,6 @@ package actor
 import (
 	"context"
 
-	"github.com/pragyandas/hydra/actorsystem/cache"
 	"github.com/pragyandas/hydra/transport"
 )
 
@@ -18,5 +17,3 @@ type TransportFactory func(ctx context.Context, actor *Actor) (*transport.ActorT
 type Message = transport.Message
 
 type ActorTransport = transport.ActorTransport
-
-type Cache = cache.Cache

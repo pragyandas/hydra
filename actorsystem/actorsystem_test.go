@@ -73,7 +73,7 @@ func TestActorCommunication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create actor system: %v", err)
 	}
-	defer system.Close()
+	defer system.Close(ctx)
 
 	testDuration := *testDurationFlag
 	var receivedCount atomic.Int32

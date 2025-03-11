@@ -11,6 +11,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/telemetry"
+	"go.uber.org/zap"
 )
 
 type BucketManager struct {
@@ -146,9 +148,11 @@ func (bm *BucketManager) getEligibleBuckets() []int {
 }
 
 func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-tryClaimBuckets")
+
 	// We should make sure only one instance of this is running
 	if !bm.claimMu.TryLock() {
-		log.Printf("another instance of this is already running")
+		logger.Debug("another instance of this is already running")
 		return
 	}
 
@@ -187,7 +191,7 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 
 	select {
 	case <-ctx.Done():
-		log.Printf("bucket claim operation cancelled: %v", ctx.Err())
+		logger.Debug("bucket claim operation cancelled", zap.Error(ctx.Err()))
 	case <-done:
 		close(errChan)
 	}
@@ -198,7 +202,7 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 	}
 
 	if len(errors) > 0 {
-		log.Printf("some bucket claims failed: %v", errors)
+		logger.Debug("some bucket claims failed", zap.Errors("errors", errors))
 	}
 }
 

@@ -7,25 +7,27 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/actor"
-	"github.com/pragyandas/hydra/actorsystem/cache"
 	"github.com/pragyandas/hydra/controlplane"
+	"github.com/pragyandas/hydra/telemetry"
 	"github.com/pragyandas/hydra/transport"
+	"go.uber.org/zap"
 )
 
 type ActorSystem struct {
-	id        string
-	nc        *nats.Conn
-	js        jetstream.JetStream
-	stream    jetstream.Stream
-	kv        jetstream.KeyValue
-	config    *Config
-	cp        *controlplane.ControlPlane
-	ctx       context.Context
-	ctxCancel context.CancelFunc
-	cache     *cache.Cache
+	id                string
+	nc                *nats.Conn
+	js                jetstream.JetStream
+	stream            jetstream.Stream
+	kv                jetstream.KeyValue
+	config            *Config
+	cp                *controlplane.ControlPlane
+	ctx               context.Context
+	ctxCancel         context.CancelFunc
+	telemetryShutdown func(context.Context) error
 }
 
 func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
+	// TODO: Merge partial config with default config
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -33,8 +35,19 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	ctx, cancel := context.WithCancel(parentCtx)
 	ctx = context.WithValue(ctx, idKey, config.ID)
 
+	logger := telemetry.GetLogger(ctx, "actorsystem")
+	logger.Info("starting actor system")
+
+	shutdown, err := telemetry.SetupOTelSDK(ctx)
+	if err != nil {
+		logger.Error("failed to setup OTel SDK", zap.Error(err))
+		cancel()
+		return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
+	}
+
 	nc, err := nats.Connect(config.NatsURL, config.ConnectOpts...)
 	if err != nil {
+		logger.Error("failed to connect to NATS", zap.Error(err))
 		cancel()
 		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
 	}
@@ -43,6 +56,7 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	if err != nil {
 		nc.Close()
 		cancel()
+		logger.Error("failed to create JetStream context", zap.Error(err))
 		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
 	}
 
@@ -55,17 +69,29 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		ctxCancel: cancel,
 	}
 
+	system.telemetryShutdown = shutdown
+
 	if err := system.initialize(ctx); err != nil {
-		system.Close()
+		logger.Error("failed to initialize actor system", zap.Error(err))
+		system.Close(ctx)
 		return nil, err
 	}
+
+	logger.Info("initialized actor system")
 
 	return system, nil
 }
 
 func (as *ActorSystem) initialize(ctx context.Context) error {
+	tracer := telemetry.GetTracer()
+	ctx, span := tracer.Start(ctx, "actorsystem-initialize")
+	defer span.End()
+
+	logger := telemetry.GetLogger(ctx, "actorsystem-initialize")
+
 	stream, err := as.js.CreateStream(ctx, as.config.MessageStreamConfig)
 	if err != nil {
+		logger.Error("failed to create stream", zap.Error(err))
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
 	as.stream = stream
@@ -75,9 +101,11 @@ func (as *ActorSystem) initialize(ctx context.Context) error {
 		if err == jetstream.ErrBucketExists {
 			kv, err = as.js.KeyValue(ctx, as.config.ActorKVConfig.Bucket)
 			if err != nil {
+				logger.Error("failed to get existing KV store", zap.Error(err))
 				return fmt.Errorf("failed to get existing KV store: %w", err)
 			}
 		} else {
+			logger.Error("failed to create KV store", zap.Error(err))
 			return fmt.Errorf("failed to create KV store: %w", err)
 		}
 	}
@@ -85,29 +113,22 @@ func (as *ActorSystem) initialize(ctx context.Context) error {
 
 	as.cp, err = controlplane.New(as.config.ID, as.config.Region, as.nc, as.js)
 	if err != nil {
+		logger.Error("failed to create control plane", zap.Error(err))
 		return fmt.Errorf("failed to create control plane: %w", err)
 	}
 
 	if err := as.cp.Start(ctx, as.config.ControlPlaneConfig); err != nil {
+		logger.Error("failed to start control plane", zap.Error(err))
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
-
-	cache, err := cache.NewCache(ctx, as.kv)
-	if err != nil {
-		return fmt.Errorf("failed to create cache: %w", err)
-	}
-	as.cache = cache
 
 	return nil
 }
 
-func (as *ActorSystem) Close() {
+func (as *ActorSystem) Close(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "actorsystem-close")
 	if as.ctxCancel != nil {
 		as.ctxCancel()
-	}
-
-	if as.cache != nil {
-		as.cache.Close()
 	}
 
 	if as.cp != nil {
@@ -116,6 +137,13 @@ func (as *ActorSystem) Close() {
 
 	if as.nc != nil {
 		as.nc.Close()
+	}
+
+	if as.telemetryShutdown != nil {
+		err := as.telemetryShutdown(ctx)
+		if err != nil {
+			logger.Error("failed to shutdown OTel SDK", zap.Error(err))
+		}
 	}
 }
 
@@ -141,7 +169,6 @@ func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory acto
 		actorType,
 		actor.WithHandlerFactory(handlerFactory),
 		actor.WithTransport(as.createTransport),
-		actor.WithCache(as.cache),
 	)
 	if err != nil {
 		return nil, err
@@ -160,7 +187,6 @@ func (as *ActorSystem) NewActorWithHandler(id string, actorType string, handler 
 		actorType,
 		actor.WithHandler(handler),
 		actor.WithTransport(as.createTransport),
-		actor.WithCache(as.cache),
 	)
 	if err != nil {
 		return nil, err

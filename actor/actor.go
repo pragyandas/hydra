@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-
-	"github.com/pragyandas/hydra/actorsystem/cache"
 )
 
 type Actor struct {
@@ -16,7 +14,6 @@ type Actor struct {
 	ctxCancel context.CancelFunc
 	msgCh     chan Message
 	transport *ActorTransport
-	cache     *cache.Cache
 }
 
 func WithHandlerFactory(factory HandlerFactory) ActorOption {
@@ -39,12 +36,6 @@ func WithTransport(factory TransportFactory) ActorOption {
 			return
 		}
 		a.transport = transport
-	}
-}
-
-func WithCache(cache *cache.Cache) ActorOption {
-	return func(a *Actor) {
-		a.cache = cache
 	}
 }
 
@@ -82,10 +73,6 @@ func NewActor(
 
 	if actor.handler == nil {
 		return nil, fmt.Errorf("handler is required")
-	}
-
-	if actor.cache == nil {
-		return nil, fmt.Errorf("cache is required")
 	}
 
 	return actor, nil

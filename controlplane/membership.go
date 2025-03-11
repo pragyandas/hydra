@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/telemetry"
+	"go.uber.org/zap"
 )
 
 // Manages system membership and discovery
@@ -19,6 +21,7 @@ type Membership struct {
 	js                jetstream.JetStream
 	kv                jetstream.KeyValue
 	members           map[string]*MemberInfo
+	membersChan       chan map[string]*MemberInfo
 	mu                sync.RWMutex
 	membershipChanged chan struct{}
 	wg                sync.WaitGroup
@@ -33,26 +36,42 @@ func NewMembership(systemID, region string, js jetstream.JetStream, membershipCh
 		js:                js,
 		membershipChanged: membershipChanged,
 		members:           make(map[string]*MemberInfo),
+		membersChan:       make(chan map[string]*MemberInfo, 1),
 		done:              make(chan struct{}),
 	}
 }
 
 func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
+	tracer := telemetry.GetTracer()
+	ctx, span := tracer.Start(ctx, "membership-start")
+	defer span.End()
+
+	logger := telemetry.GetLogger(ctx, "membership")
+
 	if err := m.initializeKV(ctx, config); err != nil {
+		logger.Error("failed to initialize KV store", zap.Error(err))
 		return err
 	}
 
 	if err := m.loadExistingState(ctx); err != nil {
+		logger.Error("failed to load existing state", zap.Error(err))
 		return err
 	}
+
+	logger.Info("loaded existing state")
 
 	m.startBackgroundTasks(ctx, config.HeartbeatInterval)
 
 	if err := m.register(ctx); err != nil {
+		logger.Error("failed to register member", zap.Error(err))
 		return err
 	}
 
+	logger.Info("registered member")
+
 	m.updateMemberPosition()
+
+	logger.Info("updated member position")
 
 	return nil
 }
@@ -253,6 +272,7 @@ func (m *Membership) watchMembers(ctx context.Context) error {
 					log.Printf("membership changed channel is full, dropping update")
 				}
 			}
+
 		}
 	}
 }

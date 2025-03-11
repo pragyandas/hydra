@@ -55,7 +55,7 @@ func (t *ActorTransport) Setup() error {
 
 	revision, err := t.conn.KV.Create(setupCtx, key, value.ToJSON())
 	if err != nil {
-		return fmt.Errorf("failed to claim actor: %w", err)
+		return fmt.Errorf("failed to register actor: %w", err)
 	}
 	t.revision = revision
 

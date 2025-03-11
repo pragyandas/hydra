@@ -6,6 +6,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/telemetry"
 )
 
 type ControlPlane struct {
@@ -43,6 +44,10 @@ func New(systemID, region string, nc *nats.Conn, js jetstream.JetStream) (*Contr
 }
 
 func (cp *ControlPlane) Start(ctx context.Context, config Config) error {
+	tracer := telemetry.GetTracer()
+	ctx, span := tracer.Start(ctx, "controlplane-start")
+	defer span.End()
+
 	if err := cp.membership.Start(ctx, config.MembershipConfig); err != nil {
 		return err
 	}
