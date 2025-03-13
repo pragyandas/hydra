@@ -51,19 +51,22 @@ The control plane is responsible for:
 
 ### Membership
 
-The membership is the component that manages the membership of the cluster. It is responsible for:
+The membership is the component that manages the membership of nodes in the cluster. It is responsible for:
 
 - Maintaining the membership of the cluster
 - Handling node joins and leaves
 - Handling node failures
 
-### Bucket ownership
+### Bucket manager
 
-The bucket ownership is the component that manages the ownership of buckets across nodes. It is responsible for:
+Bucket is the unit of distribution and load balancing across nodes in the actor system cluster.
 
-- Maintaining the ownership of buckets across nodes
-- Handling bucket splits and merges
-- Handling bucket rebalancing
+- Each bucket is owned by a single node
+- Each bucket is responsible for a specific set of actors
+- Buckets are distributed across nodes based on the node's capacity
+- Buckets are rebalanced across nodes to maintain load balance
+
+The bucket manager is the component that manages the ownership of buckets across nodes.
 
 ## Telemetry
 
