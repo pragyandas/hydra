@@ -2,23 +2,36 @@
 
 ## Local k8s setup
 
-- [] Containerize the system
-- [] Setup local distributed actor system cluster with kind
+- [ ] Containerize the system
+- [ ] Setup local distributed actor system cluster with kind
+- [ ] Create Helm chart for the system
 
 ## Observability
 
-- [] Add tracing
-- [] Define metrics
-    - [] Define metrics for actor system
-    - [] Define metrics for actor
-    - [] Define metrics for bucket ownership
-    - [] Define metrics for bucket manager
-    - [] Define metrics for membership
-    - [] Define metrics for actor activation/deactivation/idling
-- [] Observability for all actor location in a single pane of glass
+- [x] Add logging
+- [x] Add tracing
+- [ ] Define metrics
+    - [ ] Define metrics for actor system
+    - [ ] Define metrics for actor
+    - [ ] Define metrics for bucket ownership
+    - [ ] Define metrics for bucket manager
+    - [ ] Define metrics for membership
+    - [ ] Define metrics for actor activation/deactivation/idling
+- [ ] Observability for all actor location in a single pane of glass
+
+
+## Actor
+
+- [ ] Idle actor graceful shutdown with TTL
+- [ ] Add example of message processing with protobuf
+
+## Actor system
+
+- [ ] Distributed choas test for actor system
+- [ ] Add support for non-persistent actor
 
 ## Bucket ownership
 
-- [] Adding bucket splitting/merging for better load balancing
-- [] Implementing hot bucket detection and rebalancing
-- [] Adding configurable bucket counts per node based on capacity
+- [ ] Adding bucket splitting/merging for better load balancing
+- [ ] Implementing hot bucket detection and rebalancing
+- [ ] Adding configurable bucket counts per node based on capacity

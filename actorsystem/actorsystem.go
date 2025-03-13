@@ -45,6 +45,7 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
 	}
 
+	// TODO: Refactor: Move all NATS related code in all packages to connection package
 	nc, err := nats.Connect(config.NatsURL, config.ConnectOpts...)
 	if err != nil {
 		logger.Error("failed to connect to NATS", zap.Error(err))
