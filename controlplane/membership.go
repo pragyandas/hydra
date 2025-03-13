@@ -224,7 +224,7 @@ func (m *Membership) updateMemberPosition() {
 	m.selfIndex = selfIndex
 }
 
-func (m *Membership) GetMemberPosition() (memberCount int, selfIndex int) {
+func (m *Membership) GetMemberCountAndPosition() (memberCount int, selfIndex int) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.members), m.selfIndex

@@ -130,7 +130,7 @@ func (bm *BucketManager) RecalculateBuckets(ctx context.Context) {
 }
 
 func (bm *BucketManager) getEligibleBuckets() []int {
-	memberCount, selfIndex := bm.membership.GetMemberPosition()
+	memberCount, selfIndex := bm.membership.GetMemberCountAndPosition()
 	if selfIndex == -1 {
 		log.Printf("warning: couldn't find self in member list")
 		return nil
@@ -207,7 +207,7 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 }
 
 func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
+	key := fmt.Sprintf("%s/%s/%s/%d", bm.kv.Bucket(), bm.systemID, bm.region, bucket)
 	ownership := &BucketOwnership{
 		Owner:          bm.systemID,
 		LastUpdateTime: time.Now(),
@@ -271,11 +271,12 @@ func (bm *BucketManager) handleInterest(ctx context.Context, interest *BucketInt
 	ownedCount := len(bm.ownedBuckets)
 	bm.mu.RUnlock()
 
+	// If we don't own the bucket, we don't need to do anything
 	if !owns {
 		return
 	}
 
-	memberCount, _ := bm.membership.GetMemberPosition()
+	memberCount, _ := bm.membership.GetMemberCountAndPosition()
 
 	fairShare := float64(bm.numBuckets) / float64(memberCount)
 	// TODO: Make this configurable
@@ -287,7 +288,7 @@ func (bm *BucketManager) handleInterest(ctx context.Context, interest *BucketInt
 }
 
 func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
+	key := fmt.Sprintf("%s/%s/%s/%d", bm.kv.Bucket(), bm.systemID, bm.region, bucket)
 	err := bm.kv.Delete(ctx, key)
 	if err != nil {
 		log.Printf("failed to delete bucket %d: %v", bucket, err)
