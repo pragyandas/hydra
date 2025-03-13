@@ -21,9 +21,9 @@ type ActorSystem struct {
 	kv                jetstream.KeyValue
 	config            *Config
 	cp                *controlplane.ControlPlane
-	ctx               context.Context
 	ctxCancel         context.CancelFunc
-	telemetryShutdown func(context.Context) error
+	actorFactory      ActorFactory
+	telemetryShutdown TelemetryShutdown
 }
 
 func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
@@ -65,7 +65,6 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		nc:        nc,
 		js:        js,
 		config:    config,
-		ctx:       ctx,
 		ctxCancel: cancel,
 	}
 
@@ -82,24 +81,24 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	return system, nil
 }
 
-func (as *ActorSystem) initialize(ctx context.Context) error {
+func (system *ActorSystem) initialize(ctx context.Context) error {
 	tracer := telemetry.GetTracer()
 	ctx, span := tracer.Start(ctx, "actorsystem-initialize")
 	defer span.End()
 
 	logger := telemetry.GetLogger(ctx, "actorsystem-initialize")
 
-	stream, err := as.js.CreateStream(ctx, as.config.MessageStreamConfig)
+	stream, err := system.js.CreateStream(ctx, system.config.MessageStreamConfig)
 	if err != nil {
 		logger.Error("failed to create stream", zap.Error(err))
 		return fmt.Errorf("failed to create stream: %w", err)
 	}
-	as.stream = stream
+	system.stream = stream
 
-	kv, err := as.js.CreateKeyValue(ctx, as.config.ActorKVConfig)
+	kv, err := system.js.CreateKeyValue(ctx, system.config.ActorKVConfig)
 	if err != nil {
 		if err == jetstream.ErrBucketExists {
-			kv, err = as.js.KeyValue(ctx, as.config.ActorKVConfig.Bucket)
+			kv, err = system.js.KeyValue(ctx, system.config.ActorKVConfig.Bucket)
 			if err != nil {
 				logger.Error("failed to get existing KV store", zap.Error(err))
 				return fmt.Errorf("failed to get existing KV store: %w", err)
@@ -109,89 +108,65 @@ func (as *ActorSystem) initialize(ctx context.Context) error {
 			return fmt.Errorf("failed to create KV store: %w", err)
 		}
 	}
-	as.kv = kv
+	system.kv = kv
 
-	as.cp, err = controlplane.New(as.config.ID, as.config.Region, as.nc, as.js)
+	system.cp, err = controlplane.New(system.config.ID, system.config.Region, system.nc, system.js)
 	if err != nil {
 		logger.Error("failed to create control plane", zap.Error(err))
 		return fmt.Errorf("failed to create control plane: %w", err)
 	}
 
-	if err := as.cp.Start(ctx, as.config.ControlPlaneConfig); err != nil {
+	if err := system.cp.Start(ctx, system.config.ControlPlaneConfig); err != nil {
 		logger.Error("failed to start control plane", zap.Error(err))
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
 
+	system.actorFactory = newActorFactory(ctx)
+
 	return nil
 }
 
-func (as *ActorSystem) Close(ctx context.Context) {
+func (system *ActorSystem) Close(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "actorsystem-close")
-	if as.ctxCancel != nil {
-		as.ctxCancel()
+	if system.ctxCancel != nil {
+		system.ctxCancel()
 	}
 
-	if as.cp != nil {
-		as.cp.Stop()
+	if system.cp != nil {
+		system.cp.Stop()
 	}
 
-	if as.nc != nil {
-		as.nc.Close()
+	if system.nc != nil {
+		system.nc.Close()
 	}
 
-	if as.telemetryShutdown != nil {
-		err := as.telemetryShutdown(ctx)
+	if system.telemetryShutdown != nil {
+		err := system.telemetryShutdown(ctx)
 		if err != nil {
 			logger.Error("failed to shutdown OTel SDK", zap.Error(err))
 		}
 	}
 }
 
-func (as *ActorSystem) createTransport(ctx context.Context, a *actor.Actor) (*transport.ActorTransport, error) {
+func (system *ActorSystem) createTransport(a *actor.Actor) (*transport.ActorTransport, error) {
 
 	getKVKey := func(actorType, actorID string) string {
-		actorBucket := as.cp.GetBucketKey(actorType, actorID)
-		return fmt.Sprintf("%s/%s", as.config.ActorKVConfig.Bucket, actorBucket)
+		actorBucket := system.cp.GetBucketKey(actorType, actorID)
+		return fmt.Sprintf("%s/%s", system.config.ActorKVConfig.Bucket, actorBucket)
 	}
 
-	return transport.NewActorTransport(ctx, &transport.Connection{
-		JS:         as.js,
-		KV:         as.kv,
-		StreamName: as.config.MessageStreamConfig.Name,
+	return transport.NewActorTransport(&transport.Connection{
+		JS:         system.js,
+		KV:         system.kv,
+		StreamName: system.config.MessageStreamConfig.Name,
 	}, getKVKey, a)
 }
 
-func (as *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
-	// TODO: Do not send context to the actor
-	actor, err := actor.NewActor(
-		as.ctx,
-		id,
-		actorType,
-		actor.WithHandlerFactory(handlerFactory),
-		actor.WithTransport(as.createTransport),
-	)
+func (system *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
+	actor, err := system.actorFactory(id, actorType, handlerFactory, system.createTransport)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: Somehow send actor system context to the actor
-	// If actor system context is cancelled, the actor should be cancelled
-	actor.Start()
-	return actor, nil
-}
-
-func (as *ActorSystem) NewActorWithHandler(id string, actorType string, handler actor.Handler) (*actor.Actor, error) {
-	actor, err := actor.NewActor(
-		as.ctx,
-		id,
-		actorType,
-		actor.WithHandler(handler),
-		actor.WithTransport(as.createTransport),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	actor.Start()
 	return actor, nil
 }

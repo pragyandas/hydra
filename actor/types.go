@@ -1,8 +1,6 @@
 package actor
 
 import (
-	"context"
-
 	"github.com/pragyandas/hydra/transport"
 )
 
@@ -12,7 +10,7 @@ type Handler func([]byte) error
 
 type HandlerFactory func(actor *Actor) Handler
 
-type TransportFactory func(ctx context.Context, actor *Actor) (*transport.ActorTransport, error)
+type TransportFactory func(actor *Actor) (*transport.ActorTransport, error)
 
 type Message = transport.Message
 

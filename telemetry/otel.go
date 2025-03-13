@@ -36,7 +36,13 @@ func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
 	otel.SetTracerProvider(tracerProvider)
 
-	// TODO: Create similar provider for metrics if required
+	// TODO: Create similar provider for metrics
+	// Metrics to add:
+	// - Actor startup time
+	// - Actor message processing time
+	// - Number of messages processed grouped by actor type and message type
+	// - Number of messages failed grouped by actor type and message type
+	// - Number of actors in the system
 
 	return
 }

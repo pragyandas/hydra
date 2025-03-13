@@ -10,8 +10,6 @@ type Actor struct {
 	id        string
 	actorType string
 	handler   Handler
-	ctx       context.Context
-	ctxCancel context.CancelFunc
 	msgCh     chan Message
 	transport *ActorTransport
 }
@@ -30,7 +28,7 @@ func WithHandler(handler Handler) ActorOption {
 
 func WithTransport(factory TransportFactory) ActorOption {
 	return func(a *Actor) {
-		transport, err := factory(a.ctx, a)
+		transport, err := factory(a)
 		if err != nil {
 			log.Printf("Failed to create transport: %v", err)
 			return
@@ -52,13 +50,9 @@ func NewActor(
 		return nil, fmt.Errorf("actor type is required")
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-
 	actor := &Actor{
 		id:        id,
 		actorType: actorType,
-		ctx:       ctx,
-		ctxCancel: cancel,
 		msgCh:     make(chan Message),
 	}
 
@@ -78,18 +72,25 @@ func NewActor(
 	return actor, nil
 }
 
-func (a *Actor) Start() {
-	// TODO: Should accept a context and cancel the actor when the context is done
-	go a.processMessages()
-	if err := a.transport.Setup(); err != nil {
-		log.Printf("Failed to start transport for actor %s: %v", a.id, err)
+func (a *Actor) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Start message processing
+	go a.processMessages(ctx)
+
+	// Setup message transport
+	if err := a.transport.Setup(ctx); err != nil {
+		cancel()
+		return fmt.Errorf("failed to start transport for actor %s: %w", a.id, err)
 	}
+
+	return nil
 }
 
-func (a *Actor) processMessages() {
+func (a *Actor) processMessages(ctx context.Context) {
 	for {
 		select {
-		case <-a.ctx.Done():
+		case <-ctx.Done():
 			return
 		case msg := <-a.msgCh:
 			if err := a.handler(msg.Data()); err != nil {
@@ -100,10 +101,6 @@ func (a *Actor) processMessages() {
 			msg.Ack()
 		}
 	}
-}
-
-func (a *Actor) Stop() {
-	a.ctxCancel()
 }
 
 func (a *Actor) MessageChannel() chan<- Message {
@@ -119,7 +116,7 @@ func (a *Actor) Type() string {
 }
 
 func (a *Actor) SendMessage(actorType string, actorID string, message []byte) error {
-	if err := a.transport.SendMessage(a.ctx, actorType, actorID, message); err != nil {
+	if err := a.transport.SendMessage(actorType, actorID, message); err != nil {
 		return fmt.Errorf("failed to send message to actor %s: %w", actorID, err)
 	}
 
