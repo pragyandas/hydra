@@ -207,7 +207,7 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 }
 
 func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
-	key := fmt.Sprintf("%s/%s/%s/%d", bm.kv.Bucket(), bm.systemID, bm.region, bucket)
+	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
 	ownership := &BucketOwnership{
 		Owner:          bm.systemID,
 		LastUpdateTime: time.Now(),
@@ -288,7 +288,7 @@ func (bm *BucketManager) handleInterest(ctx context.Context, interest *BucketInt
 }
 
 func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
-	key := fmt.Sprintf("%s/%s/%s/%d", bm.kv.Bucket(), bm.systemID, bm.region, bucket)
+	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
 	err := bm.kv.Delete(ctx, key)
 	if err != nil {
 		log.Printf("failed to delete bucket %d: %v", bucket, err)
