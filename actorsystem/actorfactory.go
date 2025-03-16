@@ -10,7 +10,7 @@ import (
 
 type ActorFactory func(id string, actorType string, handlerFactory actor.HandlerFactory, transportFactory actor.TransportFactory) (*actor.Actor, error)
 
-func newActorFactory(ctx context.Context) ActorFactory {
+func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 	return func(id string,
 		actorType string,
 		handlerFactory actor.HandlerFactory,
@@ -30,7 +30,7 @@ func newActorFactory(ctx context.Context) ActorFactory {
 			return nil, err
 		}
 
-		err = actor.Start(ctx)
+		err = actor.Start(ctx, config)
 		if err != nil {
 			logger.Error("failed to start actor", zap.Error(err))
 			return nil, err
