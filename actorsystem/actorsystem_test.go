@@ -48,16 +48,23 @@ func TestActorCommunication(t *testing.T) {
 
 	defaultConfig := DefaultConfig()
 	config := &Config{
-		ID:                  "test-system",
-		NatsURL:             ns.ClientURL(),
-		MessageStreamConfig: defaultConfig.MessageStreamConfig,
-		ActorKVConfig:       defaultConfig.ActorKVConfig,
-		RetryInterval:       500 * time.Millisecond,
-		Region:              "test-region",
-		ControlPlaneConfig:  defaultConfig.ControlPlaneConfig,
+		ID:                    "test-system",
+		NatsURL:               ns.ClientURL(),
+		MessageStreamConfig:   defaultConfig.MessageStreamConfig,
+		KVConfig:              defaultConfig.KVConfig,
+		ActorLivenessKVConfig: defaultConfig.ActorLivenessKVConfig,
+		ActorConfig:           defaultConfig.ActorConfig,
+		RetryInterval:         500 * time.Millisecond,
+		Region:                "test-region",
+		ControlPlaneConfig:    defaultConfig.ControlPlaneConfig,
 	}
 
-	kvs := []string{config.ActorKVConfig.Bucket, config.ControlPlaneConfig.MembershipConfig.KVConfig.Bucket, config.ControlPlaneConfig.BucketManagerConfig.KVConfig.Bucket}
+	kvs := []string{
+		config.KVConfig.Bucket,
+		config.ActorLivenessKVConfig.Bucket,
+		config.ControlPlaneConfig.MembershipConfig.KVConfig.Bucket,
+		config.ControlPlaneConfig.BucketManagerConfig.KVConfig.Bucket,
+	}
 	for _, kv := range kvs {
 		js.DeleteKeyValue(kv)
 	}
