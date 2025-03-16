@@ -7,16 +7,32 @@ const (
 	EnvRegion   = "REGION"
 )
 
+var systemID, region string
+
 func GetSystemID() string {
-	if envSystemID := os.Getenv(EnvSystemID); envSystemID != "" {
-		return envSystemID
+	if systemID != "" {
+		return systemID
 	}
-	return "actorsystem"
+
+	if envSystemID := os.Getenv(EnvSystemID); envSystemID != "" {
+		systemID = envSystemID
+	} else {
+		systemID = "actorsystem"
+	}
+
+	return systemID
 }
 
 func GetRegion() string {
-	if envRegion := os.Getenv(EnvRegion); envRegion != "" {
-		return envRegion
+	if region != "" {
+		return region
 	}
-	return "local"
+
+	if envRegion := os.Getenv(EnvRegion); envRegion != "" {
+		region = envRegion
+	} else {
+		region = "local"
+	}
+
+	return region
 }
