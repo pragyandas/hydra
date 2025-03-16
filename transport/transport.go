@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/telemetry"
+	"go.uber.org/zap"
 )
 
 type ActorTransport struct {
 	conn          *Connection
 	actor         Actor
 	subject       string
-	revision      uint64
 	getKVKey      GetKVKey
 	messageSender MessageSender
 }
@@ -27,7 +28,9 @@ func NewActorTransport(conn *Connection, getKVKey GetKVKey, actor Actor) (*Actor
 	}, nil
 }
 
-func (t *ActorTransport) Setup(ctx context.Context) error {
+func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Duration) error {
+	logger := telemetry.GetLogger(ctx, "transport-setup")
+
 	kvCtx, kvCtxCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer kvCtxCancel()
 
@@ -40,30 +43,45 @@ func (t *ActorTransport) Setup(ctx context.Context) error {
 		t.actor.ID(),
 	)
 
-	value := ActorRegistration{
-		Region:     GetRegion(),
-		Subject:    t.subject,
-		LastActive: time.Now(),
+	actorRegistration := ActorRegistration{
+		CreatedAt: time.Now(),
 	}
 
-	revision, err := t.conn.KV.Create(kvCtx, key, value.ToJSON())
+	// Register the actor
+	_, registerErr := t.conn.KV.Create(kvCtx, key, actorRegistration.ToJSON())
+	if registerErr != nil {
+		logger.Error("failed to register actor", zap.Error(registerErr))
+		return fmt.Errorf("failed to register actor: %w", registerErr)
+	}
+
+	logger.Debug("registered actor", zap.String("key", key))
+
+	// Create the liveness entry in KV store
+	revision, err := t.conn.ActorLivenessKV.Put(kvCtx, key, []byte{})
 	if err != nil {
+		logger.Error("failed to create liveness entry", zap.Error(err))
 		return fmt.Errorf("failed to register actor: %w", err)
 	}
-	t.revision = revision
+
+	logger.Debug("created liveness entry", zap.String("key", key))
+
+	go t.maintainLiveness(ctx, key, revision, heartbeatInterval)
 
 	if err := t.setupConsumer(ctx); err != nil {
+		logger.Error("failed to setup consumer", zap.Error(err))
 		return fmt.Errorf("failed to setup consumer: %w", err)
 	}
 
 	t.messageSender = newMessageSender(ctx, t.conn, t.actor)
 
-	go t.maintainLiveness(ctx, key, value)
+	logger.Debug("setup consumer", zap.String("subject", t.subject))
 
 	return nil
 }
 
 func (t *ActorTransport) setupConsumer(ctx context.Context) error {
+	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
+
 	consumer, err := t.conn.JS.CreateOrUpdateConsumer(ctx, t.conn.StreamName, jetstream.ConsumerConfig{
 		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
 		FilterSubject: t.subject,
@@ -71,6 +89,7 @@ func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 		MaxAckPending: 1,
 	})
 	if err != nil {
+		logger.Error("failed to create consumer", zap.Error(err))
 		return fmt.Errorf("failed to create consumer: %w", err)
 	}
 
@@ -79,14 +98,17 @@ func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 		t.actor.MessageChannel() <- msg
 	})
 	if err != nil {
+		logger.Error("failed to consume messages", zap.Error(err))
 		return fmt.Errorf("failed to create consumer: %w", err)
 	}
 
 	return nil
 }
 
-func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, reg ActorRegistration) {
-	ticker := time.NewTicker(30 * time.Second)
+func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, revision uint64, heartbeatInterval time.Duration) {
+	logger := telemetry.GetLogger(ctx, "transport-maintain-liveness")
+
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
@@ -95,12 +117,14 @@ func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, reg A
 			return
 
 		case <-ticker.C:
-			reg.LastActive = time.Now()
-			revision, err := t.conn.KV.Update(ctx, key, reg.ToJSON(), t.revision)
+			newRevision, err := t.conn.KV.Update(ctx, key, []byte{}, revision)
 			if err != nil {
+				logger.Error("failed to update liveness entry", zap.Error(err))
 				continue
 			}
-			t.revision = revision
+
+			logger.Debug("updated liveness entry", zap.String("key", key), zap.Uint64("revision", newRevision))
+			revision = newRevision
 		}
 	}
 }

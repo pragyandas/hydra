@@ -19,6 +19,7 @@ type ActorSystem struct {
 	js                jetstream.JetStream
 	stream            jetstream.Stream
 	kv                jetstream.KeyValue
+	actorLivenessKV   jetstream.KeyValue
 	config            *Config
 	cp                *controlplane.ControlPlane
 	ctxCancel         context.CancelFunc
@@ -96,10 +97,10 @@ func (system *ActorSystem) initialize(ctx context.Context) error {
 	}
 	system.stream = stream
 
-	kv, err := system.js.CreateKeyValue(ctx, system.config.ActorKVConfig)
+	kv, err := system.js.CreateKeyValue(ctx, system.config.KVConfig)
 	if err != nil {
 		if err == jetstream.ErrBucketExists {
-			kv, err = system.js.KeyValue(ctx, system.config.ActorKVConfig.Bucket)
+			kv, err = system.js.KeyValue(ctx, system.config.KVConfig.Bucket)
 			if err != nil {
 				logger.Error("failed to get existing KV store", zap.Error(err))
 				return fmt.Errorf("failed to get existing KV store: %w", err)
@@ -110,6 +111,21 @@ func (system *ActorSystem) initialize(ctx context.Context) error {
 		}
 	}
 	system.kv = kv
+
+	actorLivenessKV, err := system.js.CreateKeyValue(ctx, system.config.ActorLivenessKVConfig)
+	if err != nil {
+		if err == jetstream.ErrBucketExists {
+			actorLivenessKV, err = system.js.KeyValue(ctx, system.config.ActorLivenessKVConfig.Bucket)
+			if err != nil {
+				logger.Error("failed to get existing actor liveness KV store", zap.Error(err))
+				return fmt.Errorf("failed to get existing actor liveness KV store: %w", err)
+			}
+		} else {
+			logger.Error("failed to create actor liveness KV store", zap.Error(err))
+			return fmt.Errorf("failed to create actor liveness KV store: %w", err)
+		}
+	}
+	system.actorLivenessKV = actorLivenessKV
 
 	system.cp, err = controlplane.New(system.config.ID, system.config.Region, system.nc, system.js)
 	if err != nil {
@@ -122,7 +138,7 @@ func (system *ActorSystem) initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
 
-	system.actorFactory = newActorFactory(ctx)
+	system.actorFactory = newActorFactory(ctx, system.config.ActorConfig)
 
 	return nil
 }
@@ -153,13 +169,14 @@ func (system *ActorSystem) createTransport(a *actor.Actor) (*transport.ActorTran
 
 	getKVKey := func(actorType, actorID string) string {
 		actorBucket := system.cp.GetBucketKey(actorType, actorID)
-		return fmt.Sprintf("%s/%s", system.config.ActorKVConfig.Bucket, actorBucket)
+		return fmt.Sprintf("%s/%s", system.config.KVConfig.Bucket, actorBucket)
 	}
 
 	return transport.NewActorTransport(&transport.Connection{
-		JS:         system.js,
-		KV:         system.kv,
-		StreamName: system.config.MessageStreamConfig.Name,
+		JS:              system.js,
+		KV:              system.kv,
+		ActorLivenessKV: system.actorLivenessKV,
+		StreamName:      system.config.MessageStreamConfig.Name,
 	}, getKVKey, a)
 }
 

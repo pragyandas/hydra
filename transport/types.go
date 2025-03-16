@@ -22,15 +22,14 @@ type Message interface {
 }
 
 type Connection struct {
-	JS         jetstream.JetStream
-	KV         jetstream.KeyValue
-	StreamName string
+	JS              jetstream.JetStream
+	KV              jetstream.KeyValue
+	ActorLivenessKV jetstream.KeyValue
+	StreamName      string
 }
 
 type ActorRegistration struct {
-	Region     string    `json:"region"`
-	Subject    string    `json:"subject"`
-	LastActive time.Time `json:"last_active"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (r ActorRegistration) ToJSON() []byte {
