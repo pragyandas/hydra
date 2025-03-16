@@ -72,14 +72,14 @@ func NewActor(
 	return actor, nil
 }
 
-func (a *Actor) Start(ctx context.Context) error {
+func (a *Actor) Start(ctx context.Context, config Config) error {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Start message processing
 	go a.processMessages(ctx)
 
 	// Setup message transport
-	if err := a.transport.Setup(ctx); err != nil {
+	if err := a.transport.Setup(ctx, config.HeartbeatInterval); err != nil {
 		cancel()
 		return fmt.Errorf("failed to start transport for actor %s: %w", a.id, err)
 	}

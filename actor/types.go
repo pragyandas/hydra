@@ -1,8 +1,15 @@
 package actor
 
 import (
+	"time"
+
 	"github.com/pragyandas/hydra/transport"
 )
+
+type Config struct {
+	HeartbeatInterval         time.Duration
+	HeartbeatsMissedThreshold int
+}
 
 type ActorOption func(*Actor)
 
