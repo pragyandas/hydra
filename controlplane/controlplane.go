@@ -4,16 +4,12 @@ import (
 	"context"
 	"sync"
 
-	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
 )
 
 type ControlPlane struct {
-	systemID          string
-	region            string
-	nc                *nats.Conn
-	js                jetstream.JetStream
+	connection        *connection.Connection
 	membership        *Membership
 	bucketManager     *BucketManager
 	wg                sync.WaitGroup
@@ -26,19 +22,16 @@ type Config struct {
 	BucketManagerConfig BucketManagerConfig
 }
 
-func New(systemID, region string, nc *nats.Conn, js jetstream.JetStream) (*ControlPlane, error) {
+func New(connection *connection.Connection) (*ControlPlane, error) {
 	cp := &ControlPlane{
-		systemID:          systemID,
-		region:            region,
-		nc:                nc,
-		js:                js,
+		connection:        connection,
 		done:              make(chan struct{}),
 		membershipChanged: make(chan struct{}, 1), // Buffered channel to avoid blocking
 	}
 
-	cp.membership = NewMembership(systemID, region, js, cp.membershipChanged)
+	cp.membership = NewMembership(connection, cp.membershipChanged)
 
-	cp.bucketManager = NewBucketManager(systemID, region, nc, js, cp.membership)
+	cp.bucketManager = NewBucketManager(connection, cp.membership)
 
 	return cp, nil
 }
@@ -95,12 +88,4 @@ func (cp *ControlPlane) Stop() error {
 
 func (cp *ControlPlane) GetBucketKey(actorType, actorID string) string {
 	return cp.bucketManager.GetBucketKey(actorType, actorID)
-}
-
-func (cp *ControlPlane) GetSystemID() string {
-	return cp.systemID
-}
-
-func (cp *ControlPlane) GetRegion() string {
-	return cp.region
 }

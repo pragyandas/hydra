@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/common"
+	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
 	"go.uber.org/zap"
 )
 
 // Manages system membership and discovery
 type Membership struct {
-	systemID          string
-	region            string
-	js                jetstream.JetStream
+	connection        *connection.Connection
 	kv                jetstream.KeyValue
 	members           map[string]*MemberInfo
 	membersChan       chan map[string]*MemberInfo
@@ -29,11 +29,9 @@ type Membership struct {
 	selfIndex         int
 }
 
-func NewMembership(systemID, region string, js jetstream.JetStream, membershipChanged chan struct{}) *Membership {
+func NewMembership(connection *connection.Connection, membershipChanged chan struct{}) *Membership {
 	return &Membership{
-		systemID:          systemID,
-		region:            region,
-		js:                js,
+		connection:        connection,
 		membershipChanged: membershipChanged,
 		members:           make(map[string]*MemberInfo),
 		membersChan:       make(chan map[string]*MemberInfo, 1),
@@ -82,10 +80,10 @@ func (m *Membership) Stop() {
 }
 
 func (m *Membership) initializeKV(ctx context.Context, config MembershipConfig) error {
-	kv, err := m.js.CreateKeyValue(ctx, config.KVConfig)
+	kv, err := m.connection.JS.CreateKeyValue(ctx, config.KVConfig)
 	if err != nil {
 		if err == jetstream.ErrBucketExists {
-			kv, err = m.js.KeyValue(ctx, config.KVConfig.Bucket)
+			kv, err = m.connection.JS.KeyValue(ctx, config.KVConfig.Bucket)
 			if err != nil {
 				return fmt.Errorf("failed to get existing KV store: %w", err)
 			}
@@ -123,9 +121,11 @@ func (m *Membership) loadExistingState(ctx context.Context) error {
 }
 
 func (m *Membership) register(ctx context.Context) error {
+	systemID, region := common.GetSystemID(), common.GetRegion()
+
 	info := &MemberInfo{
-		SystemID:  m.systemID,
-		Region:    m.region,
+		SystemID:  systemID,
+		Region:    region,
 		Heartbeat: time.Now(),
 		Metrics:   Metrics{},
 	}
@@ -135,13 +135,13 @@ func (m *Membership) register(ctx context.Context) error {
 		return fmt.Errorf("failed to marshal member info: %w", err)
 	}
 
-	key := fmt.Sprintf("%s/%s/%s", m.kv.Bucket(), m.region, m.systemID)
+	key := fmt.Sprintf("%s/%s/%s", m.kv.Bucket(), region, systemID)
 	_, err = m.kv.Put(ctx, key, data)
 	if err != nil {
 		return fmt.Errorf("failed to register member: %w", err)
 	}
 
-	m.members[m.systemID] = info
+	m.members[systemID] = info
 
 	return nil
 }
@@ -183,10 +183,11 @@ func (m *Membership) heartbeatLoop(ctx context.Context, heartbeatInterval time.D
 }
 
 func (m *Membership) heartbeat(ctx context.Context) error {
-	key := fmt.Sprintf("%s/%s/%s", m.kv.Bucket(), m.region, m.systemID)
+	systemID, region := common.GetSystemID(), common.GetRegion()
+	key := fmt.Sprintf("%s/%s/%s", m.kv.Bucket(), region, systemID)
 	info := &MemberInfo{
-		SystemID:  m.systemID,
-		Region:    m.region,
+		SystemID:  systemID,
+		Region:    region,
 		Heartbeat: time.Now(),
 		Metrics: Metrics{
 			ActorCount:  0,
@@ -205,6 +206,8 @@ func (m *Membership) heartbeat(ctx context.Context) error {
 }
 
 func (m *Membership) updateMemberPosition() {
+	systemID := common.GetSystemID()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	memberIDs := make([]string, 0, len(m.members))
@@ -215,7 +218,7 @@ func (m *Membership) updateMemberPosition() {
 
 	selfIndex := -1
 	for i, id := range memberIDs {
-		if id == m.systemID {
+		if id == systemID {
 			selfIndex = i
 			break
 		}
@@ -231,7 +234,8 @@ func (m *Membership) GetMemberCountAndPosition() (memberCount int, selfIndex int
 }
 
 func (m *Membership) watchMembers(ctx context.Context) error {
-	watcher, err := m.kv.Watch(ctx, fmt.Sprintf("%s/%s/", m.kv.Bucket(), m.region))
+	region := common.GetRegion()
+	watcher, err := m.kv.Watch(ctx, fmt.Sprintf("%s/%s/", m.kv.Bucket(), region))
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
 	}
@@ -282,13 +286,4 @@ func (m *Membership) IsMemberActive(memberID string) bool {
 	defer m.mu.RUnlock()
 	_, exists := m.members[memberID]
 	return exists
-}
-
-func (m *MemberInfo) Clone() *MemberInfo {
-	return &MemberInfo{
-		SystemID:  m.SystemID,
-		Region:    m.Region,
-		Heartbeat: m.Heartbeat,
-		Metrics:   m.Metrics,
-	}
 }

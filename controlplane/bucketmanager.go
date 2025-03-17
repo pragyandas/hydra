@@ -11,19 +11,20 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/common"
+	"github.com/pragyandas/hydra/connection"
+	"github.com/pragyandas/hydra/controlplane/actormonitor"
 	"github.com/pragyandas/hydra/telemetry"
 	"go.uber.org/zap"
 )
 
 type BucketManager struct {
-	systemID        string
-	region          string
 	numBuckets      int
 	membership      *Membership
 	ownedBuckets    map[int]*BucketOwnership
-	nc              *nats.Conn
-	js              jetstream.JetStream
+	bucketMonitors  map[int]*actormonitor.ActorDeathMonitor
 	kv              jetstream.KeyValue
+	connection      *connection.Connection
 	mu              sync.RWMutex
 	wg              sync.WaitGroup
 	done            chan struct{}
@@ -32,15 +33,13 @@ type BucketManager struct {
 	claimMu         sync.Mutex
 }
 
-func NewBucketManager(systemID, region string, nc *nats.Conn, js jetstream.JetStream, membership *Membership) *BucketManager {
+func NewBucketManager(connection *connection.Connection, membership *Membership) *BucketManager {
 	return &BucketManager{
-		systemID:     systemID,
-		region:       region,
-		membership:   membership,
-		ownedBuckets: make(map[int]*BucketOwnership),
-		nc:           nc,
-		js:           js,
-		done:         make(chan struct{}),
+		membership:     membership,
+		ownedBuckets:   make(map[int]*BucketOwnership),
+		bucketMonitors: make(map[int]*actormonitor.ActorDeathMonitor),
+		connection:     connection,
+		done:           make(chan struct{}),
 	}
 }
 
@@ -48,10 +47,10 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 	bm.numBuckets = config.NumBuckets
 
 	// Initialize KV store
-	kv, err := bm.js.CreateKeyValue(ctx, config.KVConfig)
+	kv, err := bm.connection.JS.CreateKeyValue(ctx, config.KVConfig)
 	if err != nil {
 		if err == jetstream.ErrBucketExists {
-			kv, err = bm.js.KeyValue(ctx, config.KVConfig.Bucket)
+			kv, err = bm.connection.JS.KeyValue(ctx, config.KVConfig.Bucket)
 			if err != nil {
 				return fmt.Errorf("failed to get existing KV store: %w", err)
 			}
@@ -88,8 +87,10 @@ func (bm *BucketManager) Stop() {
 }
 
 func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) error {
+	region, systemID := common.GetRegion(), common.GetSystemID()
+
 	// TODO: Make the nc subject configurable
-	sub, err := bm.nc.Subscribe(fmt.Sprintf("bucketinterest.%s.%s", bm.region, bm.systemID), func(msg *nats.Msg) {
+	sub, err := bm.connection.NC.Subscribe(fmt.Sprintf("bucketinterest.%s.%s", region, systemID), func(msg *nats.Msg) {
 		var interest BucketInterest
 		if err := json.Unmarshal(msg.Data, &interest); err != nil {
 			log.Printf("failed to unmarshal bucket interest: %v", err)
@@ -207,9 +208,13 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 }
 
 func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
+	logger := telemetry.GetLogger(ctx, "bucketmanager-claimBucket")
+
+	region, systemID := common.GetRegion(), common.GetSystemID()
+
+	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), region, bucket)
 	ownership := &BucketOwnership{
-		Owner:          bm.systemID,
+		Owner:          systemID,
 		LastUpdateTime: time.Now(),
 	}
 
@@ -224,6 +229,11 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 		bm.mu.Lock()
 		bm.ownedBuckets[bucket] = ownership
 		bm.mu.Unlock()
+
+		if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
+			logger.Error("failed to start actor death monitor", zap.Error(err))
+		}
+
 		return nil
 	}
 
@@ -258,6 +268,36 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	bm.mu.Lock()
 	bm.ownedBuckets[bucket] = ownership
 	bm.mu.Unlock()
+
+	if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
+		logger.Error("failed to start actor death monitor", zap.Error(err))
+	}
+
+	return nil
+}
+
+func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int) error {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-startBucketDeathMonitor")
+
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	if _, exists := bm.bucketMonitors[bucket]; exists {
+		return nil
+	}
+
+	monitor := actormonitor.NewActorDeathMonitor(
+		bm.connection,
+		bucket,
+	)
+
+	if err := monitor.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start death monitor for bucket %d: %w", bucket, err)
+	}
+
+	bm.bucketMonitors[bucket] = monitor
+	logger.Info("started death monitor for bucket", zap.Int("bucket", bucket))
+
 	return nil
 }
 
@@ -288,7 +328,8 @@ func (bm *BucketManager) handleInterest(ctx context.Context, interest *BucketInt
 }
 
 func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), bm.region, bucket)
+	region := common.GetRegion()
+	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), region, bucket)
 	err := bm.kv.Delete(ctx, key)
 	if err != nil {
 		log.Printf("failed to delete bucket %d: %v", bucket, err)
@@ -301,9 +342,11 @@ func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
 }
 
 func (bm *BucketManager) publishInterest(bucketID int, owner string) error {
+	region, systemID := common.GetRegion(), common.GetSystemID()
+
 	msg := &BucketInterest{
 		BucketID:  bucketID,
-		FromNode:  bm.systemID,
+		FromNode:  systemID,
 		Timestamp: time.Now(),
 	}
 
@@ -312,7 +355,7 @@ func (bm *BucketManager) publishInterest(bucketID int, owner string) error {
 		return err
 	}
 
-	return bm.nc.Publish(fmt.Sprintf("bucketinterest.%s.%s", bm.region, owner), data)
+	return bm.connection.NC.Publish(fmt.Sprintf("bucketinterest.%s.%s", region, owner), data)
 }
 
 func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
@@ -323,6 +366,7 @@ func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
 
 // Transport uses this to store actor metadata in the KV store
 func (bm *BucketManager) GetBucketKey(actorType, actorID string) string {
+	region := common.GetRegion()
 	bucket := bm.calculateBucket(actorType, actorID)
-	return fmt.Sprintf("%s/%d/%s/%s", bm.region, bucket, actorType, actorID)
+	return fmt.Sprintf("%s/%d/%s/%s", region, bucket, actorType, actorID)
 }
