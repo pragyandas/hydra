@@ -12,6 +12,7 @@ import (
 	natsd "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/actorsystem"
 )
 
 var testDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
@@ -46,8 +47,8 @@ func TestActorCommunication(t *testing.T) {
 		t.Fatalf("Failed to create JetStream context: %v", err)
 	}
 
-	defaultConfig := DefaultConfig()
-	config := &Config{
+	defaultConfig := actorsystem.DefaultConfig()
+	config := &actorsystem.Config{
 		ID:                    "test-system",
 		NatsURL:               ns.ClientURL(),
 		MessageStreamConfig:   defaultConfig.MessageStreamConfig,
@@ -76,7 +77,7 @@ func TestActorCommunication(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	system, err := NewActorSystem(ctx, config)
+	system, err := actorsystem.NewActorSystem(ctx, config)
 	if err != nil {
 		t.Fatalf("Failed to create actor system: %v", err)
 	}
