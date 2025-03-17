@@ -1,76 +1,85 @@
-# Hydra Architecture
+# Hydra - Actor System Design
 
-## Actor system
+## Overview
+Hydra is a distributed actor system built on NATS JetStream, designed for scalability and resilience.
 
-The actor system is the core component that manages actor lifecycle, messaging, and coordination across nodes. It is responsible for:
+## Core Components
 
-- Initializing and managing NATS JetStream connections for messaging and state storage
-- Setting up telemetry (logging, tracing) infrastructure
-- Managing the control plane for cluster coordination
-- Creating and managing actors through the actor factory
-- Handling graceful shutdown of components
+### Actor Model
+- Each actor has:
+  - Unique ID and type
+  - Isolated message channel
+  - Custom message handler
+  - Transport for communication
+- Message processing is sequential and isolated
+- Actors communicate only through messages
 
-Key components:
+### State Management
+Two-tier approach for robustness:
 
-- NATS JetStream stream for actor messaging
-- NATS KeyValue store for actor state persistence
-- Control plane for cluster membership and bucket ownership
-- Telemetry setup for observability
-- Actor factory for creating new actors
+1. **Registration (Persistent)**
+   - Stored in durable KV store
+   - Contains actor metadata
+   - Used for actor discovery
+   - Key format: `{bucket}/{type}/{id}`
 
-Configuration options include:
+2. **Liveness (Ephemeral)**
+   - Separate KV store with TTL
+   - Heartbeat-based health tracking
+   - Automatic cleanup of dead actors
+   - TTL = HeartbeatInterval * MissedThreshold
 
-- System ID and region
-- NATS connection settings
-- Message stream configuration
-- Actor state store configuration 
-- Control plane settings
-- Retry intervals
+### Control Plane
 
-The actor system provides a clean abstraction over the distributed infrastructure, allowing actors to communicate transparently without knowledge of physical locations.
+#### Membership Management
+- Tracks system nodes across regions
+- Heartbeat-based health monitoring
+- Propagates membership changes
+- Enables dynamic scaling
 
+#### Bucket Management
+- Shards actors using consistent hashing
+- Distributes load across nodes
+- Rebalances on membership changes
+- Ensures fair bucket distribution
 
-## Actor
+#### Death Detection
+Primary: KV Watch
+- Immediate detection through liveness expiry
+- Watches KV delete/expire events
+- Real-time actor death notification
 
-The actor is the core component that represents an entity in the system. It is responsible for:
+Backup: Safety Check
+- Periodic full scan (10s interval)
+- Catches missed KV updates
+- Ensures consistency
 
-- Receiving messages from the transport
-- Processing messages using the handler
-- Sending messages to the transport
-- Maintaining its own state
+## Key Design Decisions
 
-Key components:
+1. **Separation of Concerns**
+   - Registration separate from liveness
+   - Clear failure detection boundaries
+   - Independent scaling of components
 
-- Transport for sending and receiving messages
-- Handler for processing messages
-- State for maintaining actor state
+2. **TTL-based Liveness**
+   - Self-cleaning through TTL
+   - No explicit deregistration needed
+   - Fast failure detection
 
-## Control plane
+3. **Bucket-based Sharding**
+   - Deterministic actor placement
+   - Efficient scaling and rebalancing
+   - Region-aware distribution
 
-The control plane is responsible for:
+4. **Safety Mechanisms**
+   - Buffered channels for async operations
+   - Backup health checks
+   - Graceful shutdown handling
 
-### Membership
+## Future Considerations
+1. Actor state persistence
+2. Message delivery guarantees
+3. Cross-region communication
+4. Custom shard allocation strategies
 
-The membership is the component that manages the membership of nodes in the cluster. It is responsible for:
-
-- Maintaining the membership of the cluster
-- Handling node joins and leaves
-- Handling node failures
-
-### Bucket manager
-
-Bucket is the unit of distribution and load balancing across nodes in the actor system cluster.
-
-- Each bucket is owned by a single node
-- Each bucket is responsible for a specific set of actors
-- Buckets are distributed across nodes based on the node's capacity
-- Buckets are rebalanced across nodes to maintain load balance
-
-The bucket manager is the component that manages the ownership of buckets across nodes.
-
-## Telemetry
-
-The telemetry is the component that provides observability for the system. It is responsible for:
-
-- Setting up logging and tracing infrastructure using OTel
-- Collecting and reporting metrics
+_Note: This is a living document that will evolve with the system._

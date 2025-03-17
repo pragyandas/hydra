@@ -8,8 +8,8 @@
 
 ## Observability
 
-- [x] Add logging
-- [x] Add tracing
+- [x] Setup logger
+- [x] Setup tracer
 - [ ] Define metrics
     - [ ] Define metrics for actor system
     - [ ] Define metrics for actor
