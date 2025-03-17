@@ -1,6 +1,8 @@
 package common
 
-import "os"
+import (
+	"os"
+)
 
 const (
 	EnvSystemID = "SYSTEM_ID"

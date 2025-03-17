@@ -33,7 +33,7 @@ func DefaultConfig() *Config {
 		Region:  common.GetRegion(),
 		NatsURL: nats.DefaultURL,
 		ActorConfig: actor.Config{
-			HeartbeatInterval:         GetHeartbeatInterval(),
+			HeartbeatInterval:         GetActorLivenessHeartbeatInterval(),
 			HeartbeatsMissedThreshold: GetHeartbeatsMissedThreshold(),
 		},
 		MessageStreamConfig: jetstream.StreamConfig{
@@ -50,7 +50,7 @@ func DefaultConfig() *Config {
 			Bucket:      GetActorLivenessKVBucket(),
 			Description: "Actor liveness data store",
 			Storage:     jetstream.MemoryStorage,
-			TTL:         GetHeartbeatInterval() * time.Duration(GetHeartbeatsMissedThreshold()),
+			TTL:         GetActorLivenessHeartbeatInterval() * time.Duration(GetHeartbeatsMissedThreshold()),
 		},
 		ControlPlaneConfig: controlplane.Config{
 			MembershipConfig: controlplane.MembershipConfig{
@@ -131,7 +131,7 @@ func GetBucketOwnershipKVBucket() string {
 	return "bucketownership"
 }
 
-func GetHeartbeatInterval() time.Duration {
+func GetActorLivenessHeartbeatInterval() time.Duration {
 	if envStr := os.Getenv(EnvHeartbeatInterval); envStr != "" {
 		if val, err := time.ParseDuration(envStr); err == nil {
 			return val

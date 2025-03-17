@@ -2,10 +2,7 @@ package transport
 
 import (
 	"encoding/json"
-	"os"
 	"time"
-
-	"github.com/nats-io/nats.go/jetstream"
 )
 
 type Actor interface {
@@ -21,13 +18,6 @@ type Message interface {
 	Nak() error
 }
 
-type Connection struct {
-	JS              jetstream.JetStream
-	KV              jetstream.KeyValue
-	ActorLivenessKV jetstream.KeyValue
-	StreamName      string
-}
-
 type ActorRegistration struct {
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -35,17 +25,4 @@ type ActorRegistration struct {
 func (r ActorRegistration) ToJSON() []byte {
 	data, _ := json.Marshal(r)
 	return data
-}
-
-const (
-	EnvRegion     = "REGION"
-	DefaultRegion = "local"
-)
-
-// GetRegion returns the region from env var or "local"
-func GetRegion() string {
-	if region := os.Getenv(EnvRegion); region != "" {
-		return region
-	}
-	return DefaultRegion
 }

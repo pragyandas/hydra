@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
 	"go.uber.org/zap"
 )
 
 type ActorTransport struct {
-	conn          *Connection
+	connection    *connection.Connection
 	actor         Actor
 	subject       string
 	getKVKey      GetKVKey
@@ -20,11 +21,11 @@ type ActorTransport struct {
 
 type GetKVKey func(actorType, actorID string) string
 
-func NewActorTransport(conn *Connection, getKVKey GetKVKey, actor Actor) (*ActorTransport, error) {
+func NewActorTransport(connection *connection.Connection, getKVKey GetKVKey, actor Actor) (*ActorTransport, error) {
 	return &ActorTransport{
-		conn:     conn,
-		actor:    actor,
-		getKVKey: getKVKey,
+		connection: connection,
+		actor:      actor,
+		getKVKey:   getKVKey,
 	}, nil
 }
 
@@ -34,11 +35,12 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	kvCtx, kvCtxCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer kvCtxCancel()
 
-	// Create the actor registration in KV store
+	// This creates actor key with region and bucket
+	// Reference: controlplane/bucketmanager.go
 	key := t.getKVKey(t.actor.Type(), t.actor.ID())
 
 	t.subject = fmt.Sprintf("%s.%s.%s",
-		t.conn.StreamName,
+		t.connection.StreamName,
 		t.actor.Type(),
 		t.actor.ID(),
 	)
@@ -47,8 +49,8 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 		CreatedAt: time.Now(),
 	}
 
-	// Register the actor
-	_, registerErr := t.conn.KV.Create(kvCtx, key, actorRegistration.ToJSON())
+	// Register the actor in ActorKV
+	_, registerErr := t.connection.ActorKV.Create(kvCtx, key, actorRegistration.ToJSON())
 	if registerErr != nil {
 		logger.Error("failed to register actor", zap.Error(registerErr))
 		return fmt.Errorf("failed to register actor: %w", registerErr)
@@ -56,8 +58,8 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 
 	logger.Debug("registered actor", zap.String("key", key))
 
-	// Create the liveness entry in KV store
-	revision, err := t.conn.ActorLivenessKV.Put(kvCtx, key, []byte{})
+	// Create a liveness entry in ActorLivenessKV
+	revision, err := t.connection.ActorLivenessKV.Put(kvCtx, key, []byte{})
 	if err != nil {
 		logger.Error("failed to create liveness entry", zap.Error(err))
 		return fmt.Errorf("failed to register actor: %w", err)
@@ -72,7 +74,7 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 		return fmt.Errorf("failed to setup consumer: %w", err)
 	}
 
-	t.messageSender = newMessageSender(ctx, t.conn, t.actor)
+	t.messageSender = newMessageSender(ctx, t.connection, t.actor)
 
 	logger.Debug("setup consumer", zap.String("subject", t.subject))
 
@@ -82,7 +84,7 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
 
-	consumer, err := t.conn.JS.CreateOrUpdateConsumer(ctx, t.conn.StreamName, jetstream.ConsumerConfig{
+	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
 		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
 		FilterSubject: t.subject,
 		MaxDeliver:    1,
@@ -117,7 +119,7 @@ func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, revis
 			return
 
 		case <-ticker.C:
-			newRevision, err := t.conn.KV.Update(ctx, key, []byte{}, revision)
+			newRevision, err := t.connection.ActorLivenessKV.Update(ctx, key, []byte{}, revision)
 			if err != nil {
 				logger.Error("failed to update liveness entry", zap.Error(err))
 				continue

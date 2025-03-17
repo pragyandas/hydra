@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/controlplane"
 	"github.com/pragyandas/hydra/telemetry"
 	"github.com/pragyandas/hydra/transport"
@@ -15,11 +14,7 @@ import (
 
 type ActorSystem struct {
 	id                string
-	nc                *nats.Conn
-	js                jetstream.JetStream
-	stream            jetstream.Stream
-	kv                jetstream.KeyValue
-	actorLivenessKV   jetstream.KeyValue
+	connection        *connection.Connection
 	config            *Config
 	cp                *controlplane.ControlPlane
 	ctxCancel         context.CancelFunc
@@ -46,28 +41,18 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
 	}
 
-	// TODO: Refactor: Move all NATS related code in all packages to connection package
-	nc, err := nats.Connect(config.NatsURL, config.ConnectOpts...)
+	connection, err := connection.New(ctx, config.NatsURL, config.ConnectOpts)
 	if err != nil {
-		logger.Error("failed to connect to NATS", zap.Error(err))
+		logger.Error("failed to create connection", zap.Error(err))
 		cancel()
-		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
-	}
-
-	js, err := jetstream.New(nc)
-	if err != nil {
-		nc.Close()
-		cancel()
-		logger.Error("failed to create JetStream context", zap.Error(err))
-		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
+		return nil, fmt.Errorf("failed to create connection: %w", err)
 	}
 
 	system := &ActorSystem{
-		id:        config.ID,
-		nc:        nc,
-		js:        js,
-		config:    config,
-		ctxCancel: cancel,
+		id:         config.ID,
+		connection: connection,
+		config:     config,
+		ctxCancel:  cancel,
 	}
 
 	system.telemetryShutdown = shutdown
@@ -90,44 +75,17 @@ func (system *ActorSystem) initialize(ctx context.Context) error {
 
 	logger := telemetry.GetLogger(ctx, "actorsystem-initialize")
 
-	stream, err := system.js.CreateStream(ctx, system.config.MessageStreamConfig)
-	if err != nil {
-		logger.Error("failed to create stream", zap.Error(err))
-		return fmt.Errorf("failed to create stream: %w", err)
+	var err error
+	if err = system.connection.Initialize(ctx, connection.Config{
+		MessageStreamConfig:   system.config.MessageStreamConfig,
+		KVConfig:              system.config.KVConfig,
+		ActorLivenessKVConfig: system.config.ActorLivenessKVConfig,
+	}); err != nil {
+		logger.Error("failed to start connection", zap.Error(err))
+		return fmt.Errorf("failed to start connection: %w", err)
 	}
-	system.stream = stream
 
-	kv, err := system.js.CreateKeyValue(ctx, system.config.KVConfig)
-	if err != nil {
-		if err == jetstream.ErrBucketExists {
-			kv, err = system.js.KeyValue(ctx, system.config.KVConfig.Bucket)
-			if err != nil {
-				logger.Error("failed to get existing KV store", zap.Error(err))
-				return fmt.Errorf("failed to get existing KV store: %w", err)
-			}
-		} else {
-			logger.Error("failed to create KV store", zap.Error(err))
-			return fmt.Errorf("failed to create KV store: %w", err)
-		}
-	}
-	system.kv = kv
-
-	actorLivenessKV, err := system.js.CreateKeyValue(ctx, system.config.ActorLivenessKVConfig)
-	if err != nil {
-		if err == jetstream.ErrBucketExists {
-			actorLivenessKV, err = system.js.KeyValue(ctx, system.config.ActorLivenessKVConfig.Bucket)
-			if err != nil {
-				logger.Error("failed to get existing actor liveness KV store", zap.Error(err))
-				return fmt.Errorf("failed to get existing actor liveness KV store: %w", err)
-			}
-		} else {
-			logger.Error("failed to create actor liveness KV store", zap.Error(err))
-			return fmt.Errorf("failed to create actor liveness KV store: %w", err)
-		}
-	}
-	system.actorLivenessKV = actorLivenessKV
-
-	system.cp, err = controlplane.New(system.config.ID, system.config.Region, system.nc, system.js)
+	system.cp, err = controlplane.New(system.connection)
 	if err != nil {
 		logger.Error("failed to create control plane", zap.Error(err))
 		return fmt.Errorf("failed to create control plane: %w", err)
@@ -153,8 +111,8 @@ func (system *ActorSystem) Close(ctx context.Context) {
 		system.cp.Stop()
 	}
 
-	if system.nc != nil {
-		system.nc.Close()
+	if system.connection != nil {
+		system.connection.Close(ctx)
 	}
 
 	if system.telemetryShutdown != nil {
@@ -172,12 +130,7 @@ func (system *ActorSystem) createTransport(a *actor.Actor) (*transport.ActorTran
 		return fmt.Sprintf("%s/%s", system.config.KVConfig.Bucket, actorBucket)
 	}
 
-	return transport.NewActorTransport(&transport.Connection{
-		JS:              system.js,
-		KV:              system.kv,
-		ActorLivenessKV: system.actorLivenessKV,
-		StreamName:      system.config.MessageStreamConfig.Name,
-	}, getKVKey, a)
+	return transport.NewActorTransport(system.connection, getKVKey, a)
 }
 
 func (system *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
