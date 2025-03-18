@@ -1,8 +1,6 @@
 # Hydra
 An actor framework for Go - built on NATS ⚡
 
-"Kill an Actor — It Will Rise Again"
-
 Hydra is an opinionated, highly configurable, massively scalable actor framework for Go to build resilient applications with location-transparent messaging, automatic scaling, and fault tolerance.
 
 ## Features
