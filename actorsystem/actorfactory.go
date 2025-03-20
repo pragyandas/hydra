@@ -8,12 +8,12 @@ import (
 	"go.uber.org/zap"
 )
 
-type ActorFactory func(id string, actorType string, handlerFactory actor.HandlerFactory, transportFactory actor.TransportFactory) (*actor.Actor, error)
+type ActorFactory func(id string, actorType string, handlerFactory actor.MessageHandlerFactory, transportFactory actor.TransportFactory) (*actor.Actor, error)
 
 func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 	return func(id string,
 		actorType string,
-		handlerFactory actor.HandlerFactory,
+		handlerFactory actor.MessageHandlerFactory,
 		transportFactory actor.TransportFactory,
 	) (*actor.Actor, error) {
 		logger := telemetry.GetLogger(ctx, "actorsystem-new-actor")
@@ -21,7 +21,7 @@ func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 			ctx,
 			id,
 			actorType,
-			actor.WithHandlerFactory(handlerFactory),
+			actor.WithMessageHandlerFactory(handlerFactory),
 			actor.WithTransport(transportFactory),
 		)
 

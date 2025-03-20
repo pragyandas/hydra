@@ -77,7 +77,6 @@ func DefaultConfig() *Config {
 }
 
 type ActorSystemOption func(*ActorSystem)
-
 type TelemetryShutdown func(context.Context) error
 
 type contextKey string
