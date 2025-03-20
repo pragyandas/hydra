@@ -13,9 +13,11 @@ type Config struct {
 
 type ActorOption func(*Actor)
 
-type Handler func([]byte) error
+type MessageHandler func(msg []byte) error
 
-type HandlerFactory func(actor *Actor) Handler
+type MessageHandlerFactory func(actor *Actor) MessageHandler
+
+type ErrorHandler func(err error, msg Message)
 
 type TransportFactory func(actor *Actor) (*transport.ActorTransport, error)
 
