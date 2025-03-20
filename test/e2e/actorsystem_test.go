@@ -90,7 +90,7 @@ func TestActorCommunication(t *testing.T) {
 	startTime := time.Now()
 	endTime := startTime.Add(testDuration)
 
-	pingHandler := func(self *actor.Actor) actor.Handler {
+	pingHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
 			receivedCount.Add(1)
 			if time.Now().Before(endTime) {
@@ -100,7 +100,7 @@ func TestActorCommunication(t *testing.T) {
 		}
 	}
 
-	pongHandler := func(self *actor.Actor) actor.Handler {
+	pongHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
 			cycleCount.Add(1)
 			receivedCount.Add(1)
@@ -111,16 +111,19 @@ func TestActorCommunication(t *testing.T) {
 		}
 	}
 
+	system.RegisterMessageHandler("ping", pingHandler)
+	system.RegisterMessageHandler("pong", pongHandler)
+
 	var pingActors []*actor.Actor
 
 	for i := 0; i < numActors; i++ {
-		pingActor, err := system.NewActor(fmt.Sprintf("%d", i), "ping", pingHandler)
+		pingActor, err := system.NewActor(fmt.Sprintf("%d", i), "ping")
 		if err != nil {
 			t.Fatalf("Failed to create ping actor %d: %v", i, err)
 		}
 		pingActors = append(pingActors, pingActor)
 
-		_, err = system.NewActor(fmt.Sprintf("%d", i), "pong", pongHandler)
+		_, err = system.NewActor(fmt.Sprintf("%d", i), "pong")
 		if err != nil {
 			t.Fatalf("Failed to create pong actor %d: %v", i, err)
 		}
