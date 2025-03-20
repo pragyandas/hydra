@@ -13,13 +13,14 @@ import (
 )
 
 type ActorSystem struct {
-	id                string
-	connection        *connection.Connection
-	config            *Config
-	cp                *controlplane.ControlPlane
-	ctxCancel         context.CancelFunc
-	actorFactory      ActorFactory
-	telemetryShutdown TelemetryShutdown
+	id                   string
+	connection           *connection.Connection
+	config               *Config
+	cp                   *controlplane.ControlPlane
+	ctxCancel            context.CancelFunc
+	actorFactory         ActorFactory
+	actorMessageHandlers map[string]actor.MessageHandlerFactory
+	telemetryShutdown    TelemetryShutdown
 }
 
 func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
@@ -49,13 +50,13 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	}
 
 	system := &ActorSystem{
-		id:         config.ID,
-		connection: connection,
-		config:     config,
-		ctxCancel:  cancel,
+		id:                   config.ID,
+		connection:           connection,
+		config:               config,
+		ctxCancel:            cancel,
+		actorMessageHandlers: make(map[string]actor.MessageHandlerFactory),
+		telemetryShutdown:    shutdown,
 	}
-
-	system.telemetryShutdown = shutdown
 
 	if err := system.initialize(ctx); err != nil {
 		logger.Error("failed to initialize actor system", zap.Error(err))
@@ -133,8 +134,21 @@ func (system *ActorSystem) createTransport(a *actor.Actor) (*transport.ActorTran
 	return transport.NewActorTransport(system.connection, getKVKey, a)
 }
 
-func (system *ActorSystem) NewActor(id string, actorType string, handlerFactory actor.HandlerFactory) (*actor.Actor, error) {
-	actor, err := system.actorFactory(id, actorType, handlerFactory, system.createTransport)
+func (system *ActorSystem) RegisterMessageHandler(actorType string, handlerFactory actor.MessageHandlerFactory) {
+	system.actorMessageHandlers[actorType] = handlerFactory
+}
+
+func (system *ActorSystem) NewActor(id string, actorType string) (*actor.Actor, error) {
+	messageHandler, ok := system.actorMessageHandlers[actorType]
+	if !ok {
+		return nil, fmt.Errorf("message handler for actor type %s not found, please register a handler first", actorType)
+	}
+
+	actor, err := system.actorFactory(id,
+		actorType,
+		messageHandler,
+		system.createTransport,
+	)
 	if err != nil {
 		return nil, err
 	}
