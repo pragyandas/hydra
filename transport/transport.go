@@ -84,6 +84,7 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
 
+	// TODO: Make the max deliver configurable per actor type
 	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
 		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
 		FilterSubject: t.subject,
@@ -95,10 +96,15 @@ func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 		return fmt.Errorf("failed to create consumer: %w", err)
 	}
 
-	// TODO: Pull message from consumer only if the actor message channel is not full
 	_, err = consumer.Consume(func(msg jetstream.Msg) {
-		t.actor.MessageChannel() <- msg
-	})
+		select {
+		case t.actor.MessageChannel() <- msg:
+			logger.Debug("message sent to actor", zap.String("subject", t.subject))
+		case <-ctx.Done():
+			logger.Debug("context done, stopping consumer", zap.String("subject", t.subject))
+			msg.Nak()
+		}
+	}, jetstream.PullMaxMessages(1))
 	if err != nil {
 		logger.Error("failed to consume messages", zap.Error(err))
 		return fmt.Errorf("failed to create consumer: %w", err)
