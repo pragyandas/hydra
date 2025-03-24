@@ -13,14 +13,14 @@ import (
 )
 
 type ActorSystem struct {
-	id                   string
-	connection           *connection.Connection
-	config               *Config
-	cp                   *controlplane.ControlPlane
-	ctxCancel            context.CancelFunc
-	actorFactory         ActorFactory
-	actorMessageHandlers map[string]actor.MessageHandlerFactory
-	telemetryShutdown    TelemetryShutdown
+	id                string
+	connection        *connection.Connection
+	config            *Config
+	cp                *controlplane.ControlPlane
+	ctxCancel         context.CancelFunc
+	actorFactory      ActorFactory
+	actorTypes        map[string]*actor.ActorType
+	telemetryShutdown TelemetryShutdown
 }
 
 func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
@@ -50,12 +50,12 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	}
 
 	system := &ActorSystem{
-		id:                   config.ID,
-		connection:           connection,
-		config:               config,
-		ctxCancel:            cancel,
-		actorMessageHandlers: make(map[string]actor.MessageHandlerFactory),
-		telemetryShutdown:    shutdown,
+		id:                config.ID,
+		connection:        connection,
+		config:            config,
+		ctxCancel:         cancel,
+		actorTypes:        make(map[string]*actor.ActorType),
+		telemetryShutdown: shutdown,
 	}
 
 	if err := system.initialize(ctx); err != nil {
@@ -124,33 +124,47 @@ func (system *ActorSystem) Close(ctx context.Context) {
 	}
 }
 
-func (system *ActorSystem) createTransport(a *actor.Actor) (*transport.ActorTransport, error) {
+func (system *ActorSystem) createActorTransport(a *actor.Actor) (actor.ActorTransport, error) {
 
 	getKVKey := func(actorType, actorID string) string {
 		actorBucket := system.cp.GetBucketKey(actorType, actorID)
-		return fmt.Sprintf("%s/%s", system.config.KVConfig.Bucket, actorBucket)
+		return actorBucket
 	}
 
 	return transport.NewActorTransport(system.connection, getKVKey, a)
 }
 
-func (system *ActorSystem) RegisterMessageHandler(actorType string, handlerFactory actor.MessageHandlerFactory) {
-	system.actorMessageHandlers[actorType] = handlerFactory
+func (system *ActorSystem) createActorStateManager(a *actor.Actor, stateSerializer actor.StateSerializer) actor.ActorStateManager {
+	return actor.NewStateManager(a, system.connection, stateSerializer)
 }
 
-func (system *ActorSystem) NewActor(id string, actorType string) (*actor.Actor, error) {
-	messageHandler, ok := system.actorMessageHandlers[actorType]
-	if !ok {
-		return nil, fmt.Errorf("message handler for actor type %s not found, please register a handler first", actorType)
+func (system *ActorSystem) RegisterActorType(name string, config actor.ActorTypeConfig) error {
+	aType, err := actor.NewActorType(name,
+		actor.WithMessageHandlerFactory(config.MessageHandlerFactory),
+		actor.WithMessageErrorHandler(config.MessageErrorHandler),
+		actor.WithStateSerializer(config.StateSerializer),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create actor type %s: %w", name, err)
+	}
+
+	system.actorTypes[name] = aType
+	return nil
+}
+
+func (system *ActorSystem) CreateActor(actorType string, id string) (*actor.Actor, error) {
+	aType, exists := system.actorTypes[actorType]
+	if !exists {
+		return nil, fmt.Errorf("actor type %s not registered", actorType)
 	}
 
 	actor, err := system.actorFactory(id,
-		actorType,
-		messageHandler,
-		system.createTransport,
+		*aType,
+		system.createActorTransport,
+		system.createActorStateManager,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create actor: %w", err)
 	}
 
 	return actor, nil

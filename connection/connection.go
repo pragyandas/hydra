@@ -91,6 +91,10 @@ func (c *Connection) Initialize(ctx context.Context, config Config) error {
 	return nil
 }
 
+func (c *Connection) IsKeyNotFound(err error) bool {
+	return err == jetstream.ErrKeyNotFound
+}
+
 func (c *Connection) Close(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "connection-close")
 	logger.Info("closing connection")

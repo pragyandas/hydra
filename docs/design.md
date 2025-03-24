@@ -15,19 +15,28 @@ Hydra is a distributed actor system built on NATS JetStream, designed for scalab
 - Actors communicate only through messages
 
 ### State Management
-Two-tier approach for robustness:
+Three-tier approach for robustness:
 
 1. **Registration (Persistent)**
-   - Stored in durable KV store
+   - Stored in durable KV store (ActorKV)
    - Contains actor metadata
    - Used for actor discovery
-   - Key format: `{bucket}/{type}/{id}`
+   - Key format: `{region}/{bucket}/{type}/{id}`
 
 2. **Liveness (Ephemeral)**
    - Separate KV store with TTL
    - Heartbeat-based health tracking
    - Automatic cleanup of dead actors
    - TTL = HeartbeatInterval * MissedThreshold
+
+3. **Actor State (Persistent)**
+   - Stored in ActorKV
+   - Independent of bucket assignment
+   - Key format: `{type}/{id}/state`
+   - Raw byte storage (no format assumptions)
+   - Actor controls serialization format
+   - Survives actor resurrection and bucket rebalancing
+   - Direct access without bucket lookup
 
 ### Control Plane
 
@@ -71,10 +80,21 @@ Backup: Safety Check
    - Efficient scaling and rebalancing
    - Region-aware distribution
 
-4. **Safety Mechanisms**
-   - Buffered channels for async operations
-   - Backup health checks
-   - Graceful shutdown handling
+4. **State Management Strategy**
+   - State storage independent of bucket assignment
+   - Raw byte storage without format restrictions
+   - Actor controls own serialization format (JSON, Protobuf, custom, etc.)
+   - Enables clean actor resurrection
+   - Simplifies bucket rebalancing
+   - Direct state access pattern
+   - State persistence survives actor migrations
+
+5. **KV Store Separation**
+   - ActorKV: Registration and state (permanent)
+   - LivenessKV: Health tracking (TTL-based)
+   - Clear separation of concerns
+   - Self-cleaning liveness tracking
+   - Simplified backup/restore
 
 ## Future Considerations
 1. Actor state persistence

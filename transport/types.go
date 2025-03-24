@@ -26,3 +26,5 @@ func (r ActorRegistration) ToJSON() []byte {
 	data, _ := json.Marshal(r)
 	return data
 }
+
+type GetKVKey func(actorType, actorID string) string

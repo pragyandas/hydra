@@ -12,6 +12,7 @@ import (
 	natsd "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/actor/serializer"
 	"github.com/pragyandas/hydra/actorsystem"
 )
 
@@ -111,19 +112,31 @@ func TestActorCommunication(t *testing.T) {
 		}
 	}
 
-	system.RegisterMessageHandler("ping", pingHandler)
-	system.RegisterMessageHandler("pong", pongHandler)
+	system.RegisterActorType("ping", actor.ActorTypeConfig{
+		MessageHandlerFactory: pingHandler,
+		StateSerializer:       serializer.NewJSONSerializer(),
+		MessageErrorHandler: func(err error, msg actor.Message) {
+			t.Errorf("failed to handle message: %v", err)
+		},
+	})
+	system.RegisterActorType("pong", actor.ActorTypeConfig{
+		MessageHandlerFactory: pongHandler,
+		StateSerializer:       serializer.NewJSONSerializer(),
+		MessageErrorHandler: func(err error, msg actor.Message) {
+			t.Errorf("failed to handle message: %v", err)
+		},
+	})
 
 	var pingActors []*actor.Actor
 
 	for i := 0; i < numActors; i++ {
-		pingActor, err := system.NewActor(fmt.Sprintf("%d", i), "ping")
+		pingActor, err := system.CreateActor("ping", fmt.Sprintf("%d", i))
 		if err != nil {
 			t.Fatalf("Failed to create ping actor %d: %v", i, err)
 		}
 		pingActors = append(pingActors, pingActor)
 
-		_, err = system.NewActor(fmt.Sprintf("%d", i), "pong")
+		_, err = system.CreateActor("pong", fmt.Sprintf("%d", i))
 		if err != nil {
 			t.Fatalf("Failed to create pong actor %d: %v", i, err)
 		}

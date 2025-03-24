@@ -8,27 +8,41 @@ import (
 	"go.uber.org/zap"
 )
 
-type ActorFactory func(id string, actorType string, handlerFactory actor.MessageHandlerFactory, transportFactory actor.TransportFactory) (*actor.Actor, error)
+type ActorFactory func(id string,
+	actorType actor.ActorType,
+	transportFactory actor.TransportFactory,
+	stateManagerFactory actor.StateManagerFactory,
+) (*actor.Actor, error)
 
 func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 	return func(id string,
-		actorType string,
-		handlerFactory actor.MessageHandlerFactory,
+		actorType actor.ActorType,
 		transportFactory actor.TransportFactory,
+		stateManagerFactory actor.StateManagerFactory,
 	) (*actor.Actor, error) {
 		logger := telemetry.GetLogger(ctx, "actorsystem-new-actor")
-		actor, err := actor.NewActor(
-			ctx,
-			id,
-			actorType,
-			actor.WithMessageHandlerFactory(handlerFactory),
-			actor.WithTransport(transportFactory),
-		)
 
+		// Create base actor first
+		actor, err := actor.NewActor(ctx, id, actorType.Name)
 		if err != nil {
 			logger.Error("failed to create actor", zap.Error(err))
 			return nil, err
 		}
+
+		// Create components using actor instance
+		messageHandler := actorType.MessageHandlerFactory(actor)
+		transport, err := transportFactory(actor)
+		if err != nil {
+			logger.Error("failed to create transport", zap.Error(err))
+			return nil, err
+		}
+		stateManager := stateManagerFactory(actor, actorType.StateSerializer)
+
+		// Apply options
+		actor = actor.WithMessageHandler(messageHandler).
+			WithTransport(transport).
+			WithStateManager(stateManager).
+			WithErrorHandler(actorType.MessageErrorHandler)
 
 		err = actor.Start(ctx, config)
 		if err != nil {

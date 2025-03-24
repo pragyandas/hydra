@@ -19,8 +19,6 @@ type ActorTransport struct {
 	messageSender MessageSender
 }
 
-type GetKVKey func(actorType, actorID string) string
-
 func NewActorTransport(connection *connection.Connection, getKVKey GetKVKey, actor Actor) (*ActorTransport, error) {
 	return &ActorTransport{
 		connection: connection,
@@ -37,7 +35,7 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 
 	// This creates actor key with region and bucket
 	// Reference: controlplane/bucketmanager.go
-	key := t.getKVKey(t.actor.Type(), t.actor.ID())
+	actorBucketKey := t.getKVKey(t.actor.Type(), t.actor.ID())
 
 	t.subject = fmt.Sprintf("%s.%s.%s",
 		t.connection.StreamName,
@@ -50,24 +48,24 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	}
 
 	// Register the actor in ActorKV
-	_, registerErr := t.connection.ActorKV.Create(kvCtx, key, actorRegistration.ToJSON())
+	_, registerErr := t.connection.ActorKV.Put(kvCtx, actorBucketKey, actorRegistration.ToJSON())
 	if registerErr != nil {
 		logger.Error("failed to register actor", zap.Error(registerErr))
 		return fmt.Errorf("failed to register actor: %w", registerErr)
 	}
 
-	logger.Debug("registered actor", zap.String("key", key))
+	logger.Debug("registered actor", zap.String("key", actorBucketKey))
 
 	// Create a liveness entry in ActorLivenessKV
-	revision, err := t.connection.ActorLivenessKV.Put(kvCtx, key, []byte{})
+	revision, err := t.connection.ActorLivenessKV.Put(kvCtx, actorBucketKey, []byte{})
 	if err != nil {
 		logger.Error("failed to create liveness entry", zap.Error(err))
 		return fmt.Errorf("failed to register actor: %w", err)
 	}
 
-	logger.Debug("created liveness entry", zap.String("key", key))
+	logger.Debug("created liveness entry", zap.String("key", actorBucketKey))
 
-	go t.maintainLiveness(ctx, key, revision, heartbeatInterval)
+	go t.maintainLiveness(ctx, actorBucketKey, revision, heartbeatInterval)
 
 	if err := t.setupConsumer(ctx); err != nil {
 		logger.Error("failed to setup consumer", zap.Error(err))

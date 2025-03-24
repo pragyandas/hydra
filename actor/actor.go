@@ -3,7 +3,6 @@ package actor
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/pragyandas/hydra/telemetry"
 	"go.uber.org/zap"
@@ -14,45 +13,31 @@ type Actor struct {
 	actorType    string
 	handler      MessageHandler
 	msgCh        chan Message
-	transport    *ActorTransport
+	transport    ActorTransport
+	stateManager ActorStateManager
 	state        any
 	errorHandler ErrorHandler
 	cancel       context.CancelFunc
 }
 
-func WithMessageHandlerFactory(factory MessageHandlerFactory) ActorOption {
-	return func(a *Actor) {
-		a.handler = factory(a)
-	}
+func (a *Actor) WithMessageHandler(handler MessageHandler) *Actor {
+	a.handler = handler
+	return a
 }
 
-func WithMessageHandler(handler MessageHandler) ActorOption {
-	return func(a *Actor) {
-		a.handler = handler
-	}
+func (a *Actor) WithStateManager(stateManager ActorStateManager) *Actor {
+	a.stateManager = stateManager
+	return a
 }
 
-func WithState(state any) ActorOption {
-	return func(a *Actor) {
-		a.state = state
-	}
+func (a *Actor) WithTransport(transport ActorTransport) *Actor {
+	a.transport = transport
+	return a
 }
 
-func WithTransport(factory TransportFactory) ActorOption {
-	return func(a *Actor) {
-		transport, err := factory(a)
-		if err != nil {
-			log.Printf("Failed to create transport: %v", err)
-			return
-		}
-		a.transport = transport
-	}
-}
-
-func WithErrorHandler(handler ErrorHandler) ActorOption {
-	return func(a *Actor) {
-		a.errorHandler = handler
-	}
+func (a *Actor) WithErrorHandler(handler ErrorHandler) *Actor {
+	a.errorHandler = handler
+	return a
 }
 
 func NewActor(
@@ -79,20 +64,19 @@ func NewActor(
 		opt(actor)
 	}
 
-	if actor.transport == nil {
-		return nil, fmt.Errorf("transport is required")
-	}
-
-	if actor.handler == nil {
-		return nil, fmt.Errorf("handler is required")
-	}
-
 	return actor, nil
 }
 
 func (a *Actor) Start(ctx context.Context, config Config) error {
 	ctx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
+
+	// Load state from kv
+	state, err := a.GetState(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load state for actor %s: %w", a.id, err)
+	}
+	a.state = state
 
 	// Start message processing
 	go a.processMessages(ctx)
@@ -149,10 +133,14 @@ func (a *Actor) SendMessage(actorType string, actorID string, message []byte) er
 	return nil
 }
 
-func (a *Actor) GetState() any {
-	return a.state
+func (a *Actor) GetState(ctx context.Context) (any, error) {
+	return a.stateManager.Load(ctx)
 }
 
-func (a *Actor) SetState(state any) {
+func (a *Actor) SetState(ctx context.Context, state any) error {
+	if err := a.stateManager.Save(ctx, state); err != nil {
+		return fmt.Errorf("failed to save state for actor %s: %w", a.id, err)
+	}
 	a.state = state
+	return nil
 }
