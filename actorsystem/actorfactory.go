@@ -38,7 +38,7 @@ func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 		}
 		stateManager := stateManagerFactory(actor, actorType.StateSerializer)
 
-		// Apply options
+		// Build actor with components
 		actor = actor.WithMessageHandler(messageHandler).
 			WithTransport(transport).
 			WithStateManager(stateManager).
