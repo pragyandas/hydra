@@ -94,6 +94,12 @@ func (a *Actor) Start(ctx context.Context, config Config) error {
 	return nil
 }
 
+func (a *Actor) Close() {
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
 func (a *Actor) processMessages(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "actor-process-messages")
 

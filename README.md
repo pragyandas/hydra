@@ -16,7 +16,7 @@ Hydra is an opinionated, highly configurable, massively scalable actor framework
 ## Testing
 
 ```
-go test -v ./test/e2e/actorsystem_test.go -test.duration=10s
+go test -v ./test/e2e/actorsystem_test.go -test.duration=20s
 ```
 
 

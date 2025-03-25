@@ -14,7 +14,7 @@ import (
 var testDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
 
 func TestActorCommunication(t *testing.T) {
-	numActors := 1
+	numActors := 20
 
 	_, system, close := utils.SetupTestActorsystem(t)
 	defer close()
