@@ -2,6 +2,7 @@ package actor
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pragyandas/hydra/transport"
@@ -40,3 +41,12 @@ type TransportFactory func(actor *Actor) (ActorTransport, error)
 type StateManagerFactory func(actor *Actor, stateSerializer StateSerializer) ActorStateManager
 
 type Message = transport.Message
+
+type ActorId struct {
+	Type string
+	ID   string
+}
+
+func (id ActorId) String() string {
+	return fmt.Sprintf("%s/%s", id.Type, id.ID)
+}

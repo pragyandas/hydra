@@ -11,6 +11,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/actor"
 	"github.com/pragyandas/hydra/common"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/controlplane/actormonitor"
@@ -19,27 +20,29 @@ import (
 )
 
 type BucketManager struct {
-	numBuckets      int
-	membership      *Membership
-	ownedBuckets    map[int]*BucketOwnership
-	bucketMonitors  map[int]*actormonitor.ActorDeathMonitor
-	kv              jetstream.KeyValue
-	connection      *connection.Connection
-	mu              sync.RWMutex
-	wg              sync.WaitGroup
-	done            chan struct{}
-	interestSub     *nats.Subscription
-	discoveryTicker *time.Ticker
-	claimMu         sync.Mutex
+	numBuckets            int
+	membership            *Membership
+	ownedBuckets          map[int]*BucketOwnership
+	bucketMonitors        map[int]*actormonitor.ActorDeathMonitor
+	kv                    jetstream.KeyValue
+	connection            *connection.Connection
+	mu                    sync.RWMutex
+	wg                    sync.WaitGroup
+	done                  chan struct{}
+	interestSub           *nats.Subscription
+	discoveryTicker       *time.Ticker
+	claimMu               sync.Mutex
+	actorResurrectionChan chan actor.ActorId
 }
 
-func NewBucketManager(connection *connection.Connection, membership *Membership) *BucketManager {
+func NewBucketManager(connection *connection.Connection, membership *Membership, actorResurrectionChan chan actor.ActorId) *BucketManager {
 	return &BucketManager{
-		membership:     membership,
-		ownedBuckets:   make(map[int]*BucketOwnership),
-		bucketMonitors: make(map[int]*actormonitor.ActorDeathMonitor),
-		connection:     connection,
-		done:           make(chan struct{}),
+		membership:            membership,
+		ownedBuckets:          make(map[int]*BucketOwnership),
+		bucketMonitors:        make(map[int]*actormonitor.ActorDeathMonitor),
+		connection:            connection,
+		actorResurrectionChan: actorResurrectionChan,
+		done:                  make(chan struct{}),
 	}
 }
 
@@ -47,7 +50,6 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 	logger := telemetry.GetLogger(ctx, "bucketmanager-start")
 
 	bm.numBuckets = config.NumBuckets
-
 	// Initialize KV store
 	kv, err := bm.connection.JS.CreateKeyValue(ctx, config.KVConfig)
 	if err != nil {
@@ -293,6 +295,7 @@ func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int)
 	monitor := actormonitor.NewActorDeathMonitor(
 		bm.connection,
 		bucket,
+		bm.actorResurrectionChan,
 	)
 
 	if err := monitor.Start(ctx); err != nil {

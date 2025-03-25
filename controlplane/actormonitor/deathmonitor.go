@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pragyandas/hydra/actor"
 	"github.com/pragyandas/hydra/common"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
@@ -15,19 +16,21 @@ import (
 )
 
 type ActorDeathMonitor struct {
-	bucketID        int
-	connection      *connection.Connection
-	deadActors      map[string]struct{}
-	mailboxMonitors map[string]*ActorMailboxMonitor
-	mu              sync.RWMutex
+	bucketID              int
+	connection            *connection.Connection
+	deadActors            map[string]struct{}
+	mailboxMonitors       map[string]*ActorMailboxMonitor
+	actorResurrectionChan chan actor.ActorId
+	mu                    sync.RWMutex
 }
 
-func NewActorDeathMonitor(connection *connection.Connection, bucketID int) *ActorDeathMonitor {
+func NewActorDeathMonitor(connection *connection.Connection, bucketID int, actorResurrectionChan chan actor.ActorId) *ActorDeathMonitor {
 	return &ActorDeathMonitor{
-		bucketID:        bucketID,
-		connection:      connection,
-		deadActors:      make(map[string]struct{}),
-		mailboxMonitors: make(map[string]*ActorMailboxMonitor),
+		bucketID:              bucketID,
+		connection:            connection,
+		deadActors:            make(map[string]struct{}),
+		mailboxMonitors:       make(map[string]*ActorMailboxMonitor),
+		actorResurrectionChan: actorResurrectionChan,
 	}
 }
 
@@ -153,8 +156,9 @@ func (m *ActorDeathMonitor) onActorDeath(ctx context.Context, actorType, actorID
 		m.mailboxMonitors[actorKey] = monitor
 
 		go monitor.Start(ctx, func() {
+			// Callback function to request actor resurrection
+			m.actorResurrectionChan <- actor.ActorId{Type: actorType, ID: actorID}
 			logger.Info("actor resurrection requested", zap.String("actor", actorKey))
-			// TODO: Signal actor system to resurrect actor
 		})
 	}
 }

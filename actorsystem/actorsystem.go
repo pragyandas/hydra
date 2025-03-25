@@ -13,14 +13,15 @@ import (
 )
 
 type ActorSystem struct {
-	id                string
-	connection        *connection.Connection
-	config            *Config
-	cp                *controlplane.ControlPlane
-	ctxCancel         context.CancelFunc
-	actorFactory      ActorFactory
-	actorTypes        map[string]*actor.ActorType
-	telemetryShutdown TelemetryShutdown
+	id                    string
+	connection            *connection.Connection
+	config                *Config
+	cp                    *controlplane.ControlPlane
+	ctxCancel             context.CancelFunc
+	actorFactory          ActorFactory
+	actorTypes            map[string]*actor.ActorType
+	actorResurrectionChan chan actor.ActorId
+	telemetryShutdown     TelemetryShutdown
 }
 
 func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
@@ -50,12 +51,19 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	}
 
 	system := &ActorSystem{
-		id:                config.ID,
-		connection:        connection,
-		config:            config,
-		ctxCancel:         cancel,
-		actorTypes:        make(map[string]*actor.ActorType),
-		telemetryShutdown: shutdown,
+		id:                    config.ID,
+		connection:            connection,
+		config:                config,
+		ctxCancel:             cancel,
+		actorTypes:            make(map[string]*actor.ActorType),
+		actorResurrectionChan: make(chan actor.ActorId),
+		telemetryShutdown:     shutdown,
+	}
+
+	system.cp, err = controlplane.New(system.connection, system.actorResurrectionChan)
+	if err != nil {
+		logger.Error("failed to create control plane", zap.Error(err))
+		return nil, fmt.Errorf("failed to create control plane: %w", err)
 	}
 
 	if err := system.start(ctx); err != nil {
@@ -84,18 +92,14 @@ func (system *ActorSystem) start(ctx context.Context) error {
 		return fmt.Errorf("failed to start connection: %w", err)
 	}
 
-	system.cp, err = controlplane.New(system.connection)
-	if err != nil {
-		logger.Error("failed to create control plane", zap.Error(err))
-		return fmt.Errorf("failed to create control plane: %w", err)
-	}
+	system.actorFactory = newActorFactory(ctx, system.config.ActorConfig)
+
+	go system.handleActorResurrection(ctx)
 
 	if err := system.cp.Start(ctx, system.config.ControlPlaneConfig); err != nil {
 		logger.Error("failed to start control plane", zap.Error(err))
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
-
-	system.actorFactory = newActorFactory(ctx, system.config.ActorConfig)
 
 	logger.Info("started actor system")
 
@@ -122,6 +126,28 @@ func (system *ActorSystem) Close(ctx context.Context) {
 			logger.Error("failed to shutdown OTel SDK", zap.Error(err))
 		}
 	}
+}
+
+func (system *ActorSystem) handleActorResurrection(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "actorsystem-handle-actor-resurrection")
+
+	for {
+		select {
+		case <-ctx.Done():
+			close(system.actorResurrectionChan)
+			return
+		case req, ok := <-system.actorResurrectionChan:
+			if !ok {
+				return
+			}
+			go func(req actor.ActorId) {
+				if _, err := system.CreateActor(req.Type, req.ID); err != nil {
+					logger.Error("failed to create actor", zap.Error(err))
+				}
+			}(req)
+		}
+	}
+
 }
 
 func (system *ActorSystem) createActorTransport(a *actor.Actor) (actor.ActorTransport, error) {

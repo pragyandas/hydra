@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pragyandas/hydra/actor"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
 )
@@ -22,7 +23,7 @@ type Config struct {
 	BucketManagerConfig BucketManagerConfig
 }
 
-func New(connection *connection.Connection) (*ControlPlane, error) {
+func New(connection *connection.Connection, actorResurrectionChan chan actor.ActorId) (*ControlPlane, error) {
 	cp := &ControlPlane{
 		connection:        connection,
 		done:              make(chan struct{}),
@@ -31,7 +32,7 @@ func New(connection *connection.Connection) (*ControlPlane, error) {
 
 	cp.membership = NewMembership(connection, cp.membershipChanged)
 
-	cp.bucketManager = NewBucketManager(connection, cp.membership)
+	cp.bucketManager = NewBucketManager(connection, cp.membership, actorResurrectionChan)
 
 	return cp, nil
 }
