@@ -21,6 +21,7 @@ type ActorSystem struct {
 	actorFactory          ActorFactory
 	actorTypes            map[string]*actor.ActorType
 	actorResurrectionChan chan actor.ActorId
+	resurrectionSemaphore chan struct{}
 	telemetryShutdown     TelemetryShutdown
 }
 
@@ -57,6 +58,7 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		ctxCancel:             cancel,
 		actorTypes:            make(map[string]*actor.ActorType),
 		actorResurrectionChan: make(chan actor.ActorId),
+		resurrectionSemaphore: make(chan struct{}, config.ActorResurrectionConcurrency),
 		telemetryShutdown:     shutdown,
 	}
 
@@ -140,11 +142,25 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context) {
 			if !ok {
 				return
 			}
-			go func(req actor.ActorId) {
-				if _, err := system.CreateActor(req.Type, req.ID); err != nil {
-					logger.Error("failed to create actor", zap.Error(err))
-				}
-			}(req)
+			select {
+			case <-ctx.Done():
+				return
+			case system.resurrectionSemaphore <- struct{}{}:
+				go func(req actor.ActorId) {
+					defer func() { <-system.resurrectionSemaphore }()
+
+					if _, err := system.CreateActor(req.Type, req.ID); err != nil {
+						logger.Error("failed to create actor",
+							zap.String("type", req.Type),
+							zap.String("id", req.ID),
+							zap.Error(err))
+					} else {
+						logger.Info("actor resurrected successfully",
+							zap.String("type", req.Type),
+							zap.String("id", req.ID))
+					}
+				}(req)
+			}
 		}
 	}
 
