@@ -1,21 +1,34 @@
 package serializer
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"reflect"
+)
 
-type JSONSerializer struct{}
+// Note: This serializer uses reflection which is not the best option for performance.
+// Try custom serializer for better performance
+type JSONSerializer struct {
+	stateType reflect.Type
+}
+
+func NewJSONSerializer(stateType any) *JSONSerializer {
+	return &JSONSerializer{
+		stateType: reflect.TypeOf(stateType),
+	}
+}
 
 func (s *JSONSerializer) Serialize(state any) ([]byte, error) {
 	return json.Marshal(state)
 }
 
 func (s *JSONSerializer) Deserialize(data []byte) (any, error) {
-	var state any
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, err
-	}
-	return state, nil
-}
+	state := reflect.New(s.stateType).Interface()
 
-func NewJSONSerializer() *JSONSerializer {
-	return &JSONSerializer{}
+	if err := json.Unmarshal(data, state); err != nil {
+		return nil, fmt.Errorf("failed to deserialize state: %w", err)
+	}
+
+	// Return the value (not the pointer) to prevent shared memory issues
+	return reflect.ValueOf(state).Elem().Interface(), nil
 }
