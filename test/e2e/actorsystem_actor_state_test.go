@@ -1,18 +1,14 @@
-package actorsystem
+package actorsystemtest
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-	natsd "github.com/nats-io/nats-server/v2/test"
-	"github.com/nats-io/nats.go"
 	"github.com/pragyandas/hydra/actor"
-	"github.com/pragyandas/hydra/actorsystem"
+	"github.com/pragyandas/hydra/actor/serializer"
+	"github.com/pragyandas/hydra/test/e2e/utils"
 )
 
 var actorStateTestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor state test")
@@ -21,83 +17,9 @@ type ActorState struct {
 	Count int
 }
 
-type ActorStateSerializer struct{}
-
-func (s *ActorStateSerializer) Serialize(state any) ([]byte, error) {
-	return json.Marshal(state)
-}
-
-func (s *ActorStateSerializer) Deserialize(data []byte) (any, error) {
-	var state ActorState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, err
-	}
-	return state, nil
-}
-
 func TestActorStateUpdate(t *testing.T) {
-	opts := &server.Options{
-		Port:      -1,
-		Host:      "127.0.0.1",
-		JetStream: true,
-		StoreDir:  t.TempDir(),
-	}
-	ns := natsd.RunServer(opts)
-	if ns == nil {
-		t.Fatal("Failed to create NATS test server")
-	}
-	defer ns.Shutdown()
-
-	if !ns.ReadyForConnections(4 * time.Second) {
-		t.Fatal("NATS server failed to start")
-	}
-
-	nc, err := nats.Connect(ns.ClientURL())
-	if err != nil {
-		t.Fatalf("Failed to connect to NATS: %v", err)
-	}
-	defer nc.Close()
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Failed to create JetStream context: %v", err)
-	}
-
-	defaultConfig := actorsystem.DefaultConfig()
-	config := &actorsystem.Config{
-		ID:                    "test-system",
-		NatsURL:               ns.ClientURL(),
-		MessageStreamConfig:   defaultConfig.MessageStreamConfig,
-		KVConfig:              defaultConfig.KVConfig,
-		ActorLivenessKVConfig: defaultConfig.ActorLivenessKVConfig,
-		ActorConfig:           defaultConfig.ActorConfig,
-		RetryInterval:         500 * time.Millisecond,
-		Region:                "test-region",
-		ControlPlaneConfig:    defaultConfig.ControlPlaneConfig,
-	}
-
-	kvs := []string{
-		config.KVConfig.Bucket,
-		config.ActorLivenessKVConfig.Bucket,
-		config.ControlPlaneConfig.MembershipConfig.KVConfig.Bucket,
-		config.ControlPlaneConfig.BucketManagerConfig.KVConfig.Bucket,
-	}
-	for _, kv := range kvs {
-		js.DeleteKeyValue(kv)
-	}
-
-	for _, stream := range []string{config.MessageStreamConfig.Name} {
-		js.DeleteStream(stream)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	system, err := actorsystem.NewActorSystem(ctx, config)
-	if err != nil {
-		t.Fatalf("Failed to create actor system: %v", err)
-	}
-	defer system.Close(ctx)
+	ctx, system, close := utils.SetupTestActorsystem(t)
+	defer close()
 
 	testDuration := *actorStateTestDurationFlag
 
@@ -148,14 +70,14 @@ func TestActorStateUpdate(t *testing.T) {
 
 	system.RegisterActorType("ping", actor.ActorTypeConfig{
 		MessageHandlerFactory: pingHandler,
-		StateSerializer:       &ActorStateSerializer{},
+		StateSerializer:       serializer.NewJSONSerializer(ActorState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},
 	})
 	system.RegisterActorType("pong", actor.ActorTypeConfig{
 		MessageHandlerFactory: pongHandler,
-		StateSerializer:       &ActorStateSerializer{},
+		StateSerializer:       serializer.NewJSONSerializer(ActorState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},
