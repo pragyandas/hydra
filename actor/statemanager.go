@@ -7,16 +7,6 @@ import (
 	"github.com/pragyandas/hydra/connection"
 )
 
-type ActorStateManager interface {
-	Save(ctx context.Context, state any) error
-	Load(ctx context.Context) (any, error)
-}
-
-type StateSerializer interface {
-	Serialize(state any) ([]byte, error)
-	Deserialize(data []byte) (any, error)
-}
-
 type StateManager struct {
 	actor           *Actor
 	connection      *connection.Connection

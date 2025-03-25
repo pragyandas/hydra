@@ -12,12 +12,22 @@ type Config struct {
 	HeartbeatsMissedThreshold int
 }
 
+type ActorOption func(*Actor)
+
 type ActorTransport interface {
 	Setup(ctx context.Context, heartbeatInterval time.Duration) error
 	SendMessage(actorType string, actorID string, msg []byte) error
 }
 
-type ActorOption func(*Actor)
+type ActorStateManager interface {
+	Save(ctx context.Context, state any) error
+	Load(ctx context.Context) (any, error)
+}
+
+type StateSerializer interface {
+	Serialize(state any) ([]byte, error)
+	Deserialize(data []byte) (any, error)
+}
 
 type MessageHandler func(msg []byte) error
 

@@ -11,7 +11,7 @@ Hydra is an opinionated, highly configurable, massively scalable actor framework
 - Highly configurable
 - Automatic shutdown and resurrection of actors
 - Built-in load balancing
-- Built-in monitoring and observability
+- Built-in telemetry
 
 ## Testing
 
