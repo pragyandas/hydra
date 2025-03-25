@@ -44,6 +44,8 @@ func NewBucketManager(connection *connection.Connection, membership *Membership)
 }
 
 func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) error {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-start")
+
 	bm.numBuckets = config.NumBuckets
 
 	// Initialize KV store
@@ -71,6 +73,8 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 		defer bm.wg.Done()
 		bm.bucketDiscoveryLoop(ctx, config.SafetyCheckInterval)
 	}()
+
+	logger.Info("started bucket manager")
 
 	return nil
 }
@@ -296,7 +300,7 @@ func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int)
 	}
 
 	bm.bucketMonitors[bucket] = monitor
-	logger.Info("started death monitor for bucket", zap.Int("bucket", bucket))
+	logger.Debug("started death monitor for bucket", zap.Int("bucket", bucket))
 
 	return nil
 }

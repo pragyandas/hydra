@@ -37,6 +37,8 @@ func New(connection *connection.Connection) (*ControlPlane, error) {
 }
 
 func (cp *ControlPlane) Start(ctx context.Context, config Config) error {
+	logger := telemetry.GetLogger(ctx, "controlplane-start")
+
 	tracer := telemetry.GetTracer()
 	ctx, span := tracer.Start(ctx, "controlplane-start")
 	defer span.End()
@@ -54,6 +56,8 @@ func (cp *ControlPlane) Start(ctx context.Context, config Config) error {
 		defer cp.wg.Done()
 		cp.handlemembershipUpdate(ctx)
 	}()
+
+	logger.Info("started control plane")
 
 	return nil
 }

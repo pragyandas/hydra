@@ -68,6 +68,8 @@ func NewActor(
 }
 
 func (a *Actor) Start(ctx context.Context, config Config) error {
+	logger := telemetry.GetLogger(ctx, "actor-start")
+
 	ctx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
 
@@ -86,6 +88,8 @@ func (a *Actor) Start(ctx context.Context, config Config) error {
 		a.cancel()
 		return fmt.Errorf("failed to start transport for actor %s: %w", a.id, err)
 	}
+
+	logger.Info("started actor", zap.String("id", a.id), zap.String("actorType", a.actorType))
 
 	return nil
 }

@@ -58,23 +58,21 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		telemetryShutdown: shutdown,
 	}
 
-	if err := system.initialize(ctx); err != nil {
+	if err := system.start(ctx); err != nil {
 		logger.Error("failed to initialize actor system", zap.Error(err))
 		system.Close(ctx)
 		return nil, err
 	}
 
-	logger.Info("initialized actor system")
-
 	return system, nil
 }
 
-func (system *ActorSystem) initialize(ctx context.Context) error {
+func (system *ActorSystem) start(ctx context.Context) error {
 	tracer := telemetry.GetTracer()
-	ctx, span := tracer.Start(ctx, "actorsystem-initialize")
+	ctx, span := tracer.Start(ctx, "actorsystem-start")
 	defer span.End()
 
-	logger := telemetry.GetLogger(ctx, "actorsystem-initialize")
+	logger := telemetry.GetLogger(ctx, "actorsystem-start")
 
 	var err error
 	if err = system.connection.Initialize(ctx, connection.Config{
@@ -98,6 +96,8 @@ func (system *ActorSystem) initialize(ctx context.Context) error {
 	}
 
 	system.actorFactory = newActorFactory(ctx, system.config.ActorConfig)
+
+	logger.Info("started actor system")
 
 	return nil
 }

@@ -56,8 +56,6 @@ func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
 		return err
 	}
 
-	logger.Info("loaded existing state")
-
 	m.startBackgroundTasks(ctx, config.HeartbeatInterval)
 
 	if err := m.register(ctx); err != nil {
@@ -65,11 +63,9 @@ func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
 		return err
 	}
 
-	logger.Info("registered member")
-
 	m.updateMemberPosition()
 
-	logger.Info("updated member position")
+	logger.Info("started membership")
 
 	return nil
 }
