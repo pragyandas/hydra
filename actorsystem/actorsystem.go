@@ -22,7 +22,6 @@ type ActorSystem struct {
 	actorFactory          ActorFactory
 	actorTypes            map[string]*actor.ActorType
 	actorResurrectionChan chan actor.ActorId
-	resurrectionSemaphore chan struct{}
 	telemetryShutdown     TelemetryShutdown
 }
 
@@ -38,14 +37,11 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	logger := telemetry.GetLogger(ctx, "actorsystem")
 	logger.Info("starting actor system")
 
-	// shutdown, err := telemetry.SetupOTelSDK(ctx)
-	// if err != nil {
-	// 	logger.Error("failed to setup OTel SDK", zap.Error(err))
-	// 	cancel()
-	// 	return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
-	// }
-	shutdown := func(ctx context.Context) error {
-		return nil
+	shutdown, err := telemetry.SetupOTelSDK(ctx)
+	if err != nil {
+		logger.Error("failed to setup OTel SDK", zap.Error(err))
+		cancel()
+		return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
 	}
 
 	connection, err := connection.New(ctx, config.NatsURL, config.ConnectOpts)
@@ -63,7 +59,6 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		ctxCancel:             cancel,
 		actorTypes:            make(map[string]*actor.ActorType),
 		actorResurrectionChan: make(chan actor.ActorId),
-		resurrectionSemaphore: make(chan struct{}, config.ActorResurrectionConcurrency),
 		telemetryShutdown:     shutdown,
 	}
 
@@ -147,29 +142,9 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// select {
-			// case system.resurrectionSemaphore <- struct{}{}:
-			// 	go func(req actor.ActorId) {
-			// 		defer func() { <-system.resurrectionSemaphore }()
 
-			// 		if _, err := system.CreateActor(req.Type, req.ID); err != nil {
-			// 			logger.Error("failed to create actor",
-			// 				zap.String("type", req.Type),
-			// 				zap.String("id", req.ID),
-			// 				zap.Error(err))
-			// 		} else {
-			// 			logger.Info("actor resurrected successfully",
-			// 				zap.String("type", req.Type),
-			// 				zap.String("id", req.ID))
-			// 		}
-			// 	}(req)
-			// case <-ctx.Done():
-			// 	return
-			// }
-
+			// TODO: Add a semaphore to limit the number of concurrent actor creations
 			go func(req actor.ActorId) {
-				defer func() { <-system.resurrectionSemaphore }()
-
 				if _, err := system.CreateActor(req.Type, req.ID); err != nil {
 					logger.Error("failed to create actor",
 						zap.String("type", req.Type),
@@ -206,6 +181,7 @@ func (system *ActorSystem) RegisterActorType(name string, config actor.ActorType
 		actor.WithMessageHandlerFactory(config.MessageHandlerFactory),
 		actor.WithMessageErrorHandler(config.MessageErrorHandler),
 		actor.WithStateSerializer(config.StateSerializer),
+		actor.WithActorConfig(system.config.ActorConfig),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create actor type %s: %w", name, err)
