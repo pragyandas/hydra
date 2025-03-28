@@ -11,10 +11,10 @@ import (
 )
 
 type ActorMailboxMonitor struct {
-	connection               *connection.Connection
-	actorType                string
-	actorID                  string
-	actorResurrectionHandler func()
+	connection *connection.Connection
+	actorType  string
+	actorID    string
+	done       chan struct{}
 }
 
 func NewActorMailboxMonitor(connection *connection.Connection, actorType, actorID string) *ActorMailboxMonitor {
@@ -22,6 +22,7 @@ func NewActorMailboxMonitor(connection *connection.Connection, actorType, actorI
 		connection: connection,
 		actorType:  actorType,
 		actorID:    actorID,
+		done:       make(chan struct{}),
 	}
 }
 
@@ -37,16 +38,20 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 
 	for {
 		select {
+		case <-m.done:
+			return
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			consumer, err := m.connection.JS.Consumer(ctx, m.connection.StreamName, consumerName)
 			if err != nil {
+				logger.Error("failed to get consumer", zap.Error(err))
 				continue
 			}
 
 			info, err := consumer.Info(ctx)
 			if err != nil {
+				logger.Error("failed to get consumer info", zap.Error(err))
 				continue
 			}
 
@@ -55,9 +60,12 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 					zap.String("actor", fmt.Sprintf("%s/%s", m.actorType, m.actorID)),
 					zap.Uint64("pending", info.NumPending))
 
-				m.actorResurrectionHandler()
-				return
+				resurrectionHandler()
 			}
 		}
 	}
+}
+
+func (m *ActorMailboxMonitor) Stop() {
+	close(m.done)
 }

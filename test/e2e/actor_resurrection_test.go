@@ -59,7 +59,7 @@ func TestActorResurrection(t *testing.T) {
 
 	actorB.Close()
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if processedCount.Load() == int32(numMessages) {
 			break

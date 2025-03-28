@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"flag"
 	"testing"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/pragyandas/hydra/actorsystem"
 )
+
+var TestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
 
 func SetupTestActorsystem(t *testing.T) (context.Context, *actorsystem.ActorSystem, func()) {
 	opts := &server.Options{

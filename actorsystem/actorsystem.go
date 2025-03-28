@@ -16,6 +16,7 @@ type ActorSystem struct {
 	id                    string
 	connection            *connection.Connection
 	config                *Config
+	actors                map[string]any
 	cp                    *controlplane.ControlPlane
 	ctxCancel             context.CancelFunc
 	actorFactory          ActorFactory
@@ -37,11 +38,14 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 	logger := telemetry.GetLogger(ctx, "actorsystem")
 	logger.Info("starting actor system")
 
-	shutdown, err := telemetry.SetupOTelSDK(ctx)
-	if err != nil {
-		logger.Error("failed to setup OTel SDK", zap.Error(err))
-		cancel()
-		return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
+	// shutdown, err := telemetry.SetupOTelSDK(ctx)
+	// if err != nil {
+	// 	logger.Error("failed to setup OTel SDK", zap.Error(err))
+	// 	cancel()
+	// 	return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
+	// }
+	shutdown := func(ctx context.Context) error {
+		return nil
 	}
 
 	connection, err := connection.New(ctx, config.NatsURL, config.ConnectOpts)
@@ -55,6 +59,7 @@ func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, er
 		id:                    config.ID,
 		connection:            connection,
 		config:                config,
+		actors:                make(map[string]any),
 		ctxCancel:             cancel,
 		actorTypes:            make(map[string]*actor.ActorType),
 		actorResurrectionChan: make(chan actor.ActorId),
@@ -142,25 +147,41 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context) {
 			if !ok {
 				return
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case system.resurrectionSemaphore <- struct{}{}:
-				go func(req actor.ActorId) {
-					defer func() { <-system.resurrectionSemaphore }()
+			// select {
+			// case system.resurrectionSemaphore <- struct{}{}:
+			// 	go func(req actor.ActorId) {
+			// 		defer func() { <-system.resurrectionSemaphore }()
 
-					if _, err := system.CreateActor(req.Type, req.ID); err != nil {
-						logger.Error("failed to create actor",
-							zap.String("type", req.Type),
-							zap.String("id", req.ID),
-							zap.Error(err))
-					} else {
-						logger.Info("actor resurrected successfully",
-							zap.String("type", req.Type),
-							zap.String("id", req.ID))
-					}
-				}(req)
-			}
+			// 		if _, err := system.CreateActor(req.Type, req.ID); err != nil {
+			// 			logger.Error("failed to create actor",
+			// 				zap.String("type", req.Type),
+			// 				zap.String("id", req.ID),
+			// 				zap.Error(err))
+			// 		} else {
+			// 			logger.Info("actor resurrected successfully",
+			// 				zap.String("type", req.Type),
+			// 				zap.String("id", req.ID))
+			// 		}
+			// 	}(req)
+			// case <-ctx.Done():
+			// 	return
+			// }
+
+			go func(req actor.ActorId) {
+				defer func() { <-system.resurrectionSemaphore }()
+
+				if _, err := system.CreateActor(req.Type, req.ID); err != nil {
+					logger.Error("failed to create actor",
+						zap.String("type", req.Type),
+						zap.String("id", req.ID),
+						zap.Error(err))
+				} else {
+					logger.Info("actor resurrected successfully",
+						zap.String("type", req.Type),
+						zap.String("id", req.ID))
+				}
+			}(req)
+
 		}
 	}
 
@@ -195,19 +216,40 @@ func (system *ActorSystem) RegisterActorType(name string, config actor.ActorType
 }
 
 func (system *ActorSystem) CreateActor(actorType string, id string) (*actor.Actor, error) {
+	key := fmt.Sprintf("%s.%s", actorType, id)
+	if _, exists := system.actors[key]; exists {
+		return nil, fmt.Errorf("actor %s already exists", key)
+	}
+
 	aType, exists := system.actorTypes[actorType]
 	if !exists {
 		return nil, fmt.Errorf("actor type %s not registered", actorType)
 	}
+
+	system.actors[key] = struct{}{}
 
 	actor, err := system.actorFactory(id,
 		*aType,
 		system.createActorTransport,
 		system.createActorStateManager,
 	)
+
 	if err != nil {
+		delete(system.actors, key)
 		return nil, fmt.Errorf("failed to create actor: %w", err)
 	}
 
+	actor = actor.WithCloseCallback(func() {
+		delete(system.actors, key)
+	})
+
 	return actor, nil
+}
+
+func (system *ActorSystem) GetOrCreateActor(actorType string, id string) (*actor.Actor, error) {
+	key := fmt.Sprintf("%s.%s", actorType, id)
+	if _, exists := system.actors[key]; !exists {
+		return system.CreateActor(actorType, id)
+	}
+	return system.actors[key].(*actor.Actor), nil
 }

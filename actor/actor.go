@@ -9,15 +9,16 @@ import (
 )
 
 type Actor struct {
-	id           string
-	actorType    string
-	handler      MessageHandler
-	msgCh        chan Message
-	transport    ActorTransport
-	stateManager ActorStateManager
-	state        any
-	errorHandler ErrorHandler
-	cancel       context.CancelFunc
+	id            string
+	actorType     string
+	handler       MessageHandler
+	msgCh         chan Message
+	transport     ActorTransport
+	closeCallback func()
+	stateManager  ActorStateManager
+	state         any
+	errorHandler  ErrorHandler
+	cancel        context.CancelFunc
 }
 
 func (a *Actor) WithMessageHandler(handler MessageHandler) *Actor {
@@ -37,6 +38,11 @@ func (a *Actor) WithTransport(transport ActorTransport) *Actor {
 
 func (a *Actor) WithErrorHandler(handler ErrorHandler) *Actor {
 	a.errorHandler = handler
+	return a
+}
+
+func (a *Actor) WithCloseCallback(callback func()) *Actor {
+	a.closeCallback = callback
 	return a
 }
 
@@ -97,6 +103,10 @@ func (a *Actor) Start(ctx context.Context, config Config) error {
 func (a *Actor) Close() {
 	if a.cancel != nil {
 		a.cancel()
+	}
+
+	if a.closeCallback != nil {
+		a.closeCallback()
 	}
 }
 

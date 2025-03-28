@@ -1,7 +1,6 @@
 package actorsystemtest
 
 import (
-	"flag"
 	"fmt"
 	"testing"
 	"time"
@@ -11,8 +10,6 @@ import (
 	"github.com/pragyandas/hydra/test/e2e/utils"
 )
 
-var actorStateTestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor state test")
-
 type ActorState struct {
 	Count int
 }
@@ -21,7 +18,7 @@ func TestActorStateUpdate(t *testing.T) {
 	ctx, system, close := utils.SetupTestActorsystem(t)
 	defer close()
 
-	testDuration := *actorStateTestDurationFlag
+	testDuration := *utils.TestDurationFlag
 
 	startTime := time.Now()
 	endTime := startTime.Add(testDuration)

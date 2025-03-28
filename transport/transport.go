@@ -57,7 +57,7 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	logger.Debug("registered actor", zap.String("key", actorBucketKey))
 
 	// Create a liveness entry in ActorLivenessKV
-	revision, err := t.connection.ActorLivenessKV.Put(kvCtx, actorBucketKey, []byte{})
+	revision, err := t.connection.ActorLivenessKV.Put(kvCtx, actorBucketKey, []byte(time.Now().Format(time.RFC3339)))
 	if err != nil {
 		logger.Error("failed to create liveness entry", zap.Error(err))
 		return fmt.Errorf("failed to register actor: %w", err)
@@ -86,8 +86,11 @@ func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
 		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
 		FilterSubject: t.subject,
-		MaxDeliver:    1,
+		MaxDeliver:    -1,
 		MaxAckPending: 1,
+		DeliverPolicy: jetstream.DeliverNewPolicy,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		AckWait:       100 * time.Millisecond,
 	})
 	if err != nil {
 		logger.Error("failed to create consumer", zap.Error(err))
@@ -100,7 +103,6 @@ func (t *ActorTransport) setupConsumer(ctx context.Context) error {
 			logger.Debug("message sent to actor", zap.String("subject", t.subject))
 		case <-ctx.Done():
 			logger.Debug("context done, stopping consumer", zap.String("subject", t.subject))
-			msg.Nak()
 		}
 	}, jetstream.PullMaxMessages(1))
 	if err != nil {
@@ -120,12 +122,19 @@ func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, revis
 	for {
 		select {
 		case <-ctx.Done():
+			logger.Debug("context done, stopping liveness maintenance", zap.String("key", key))
+			deleteCtx, deleteCtxCancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer deleteCtxCancel()
+
+			if err := t.connection.ActorLivenessKV.Delete(deleteCtx, key); err != nil {
+				logger.Error("failed to delete liveness entry", zap.String("key", key), zap.Error(err))
+			}
 			return
 
 		case <-ticker.C:
-			newRevision, err := t.connection.ActorLivenessKV.Update(ctx, key, []byte{}, revision)
+			newRevision, err := t.connection.ActorLivenessKV.Update(ctx, key, []byte(time.Now().Format(time.RFC3339)), revision)
 			if err != nil {
-				logger.Error("failed to update liveness entry", zap.Error(err))
+				logger.Error("failed to update liveness entry", zap.String("key", key), zap.Error(err))
 				continue
 			}
 

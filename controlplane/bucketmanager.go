@@ -375,5 +375,5 @@ func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
 func (bm *BucketManager) GetBucketKey(actorType, actorID string) string {
 	region := common.GetRegion()
 	bucket := bm.calculateBucket(actorType, actorID)
-	return fmt.Sprintf("%s/%d/%s/%s", region, bucket, actorType, actorID)
+	return fmt.Sprintf("%s.%d.%s.%s", region, bucket, actorType, actorID)
 }

@@ -1,7 +1,6 @@
 package actorsystemtest
 
 import (
-	"flag"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -11,15 +10,13 @@ import (
 	"github.com/pragyandas/hydra/test/e2e/utils"
 )
 
-var testDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
-
 func TestActorCommunication(t *testing.T) {
 	numActors := 20
 
 	_, system, close := utils.SetupTestActorsystem(t)
 	defer close()
 
-	testDuration := *testDurationFlag
+	testDuration := *utils.TestDurationFlag
 	var receivedCount atomic.Int32
 	var cycleCount atomic.Int32
 

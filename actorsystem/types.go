@@ -50,7 +50,8 @@ func DefaultConfig() *Config {
 		ActorLivenessKVConfig: jetstream.KeyValueConfig{
 			Bucket:      GetActorLivenessKVBucket(),
 			Description: "Actor liveness data store",
-			Storage:     jetstream.MemoryStorage,
+			Storage:     jetstream.FileStorage,
+			History:     1,
 			TTL:         GetActorLivenessHeartbeatInterval() * time.Duration(GetHeartbeatsMissedThreshold()),
 		},
 		ControlPlaneConfig: controlplane.Config{
@@ -59,12 +60,13 @@ func DefaultConfig() *Config {
 					Bucket:      GetMembershipKVBucket(),
 					Description: "Membership data store",
 					Storage:     jetstream.FileStorage,
+					History:     1,
 					TTL:         3 * time.Second,
 				},
 				HeartbeatInterval: 1 * time.Second,
 			},
 			BucketManagerConfig: controlplane.BucketManagerConfig{
-				NumBuckets:          16,
+				NumBuckets:          1,
 				SafetyCheckInterval: 5 * time.Second,
 				KVConfig: jetstream.KeyValueConfig{
 					Bucket:      GetBucketOwnershipKVBucket(),
@@ -147,5 +149,5 @@ func GetHeartbeatsMissedThreshold() int {
 			return val
 		}
 	}
-	return 5
+	return 3
 }
