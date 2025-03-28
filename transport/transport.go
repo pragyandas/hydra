@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
@@ -27,7 +28,7 @@ func NewActorTransport(connection *connection.Connection, getKVKey GetKVKey, act
 	}, nil
 }
 
-func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Duration) error {
+func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Duration, consumerConfig jetstream.ConsumerConfig) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup")
 
 	kvCtx, kvCtxCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -67,7 +68,7 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 
 	go t.maintainLiveness(ctx, actorBucketKey, revision, heartbeatInterval)
 
-	if err := t.setupConsumer(ctx); err != nil {
+	if err := t.setupConsumer(ctx, consumerConfig); err != nil {
 		logger.Error("failed to setup consumer", zap.Error(err))
 		return fmt.Errorf("failed to setup consumer: %w", err)
 	}
@@ -79,19 +80,13 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	return nil
 }
 
-func (t *ActorTransport) setupConsumer(ctx context.Context) error {
+func (t *ActorTransport) setupConsumer(ctx context.Context, config jetstream.ConsumerConfig) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
 
-	// TODO: Make the max deliver configurable per actor type
-	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
-		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
-		FilterSubject: t.subject,
-		MaxDeliver:    -1,
-		MaxAckPending: 1,
-		DeliverPolicy: jetstream.DeliverNewPolicy,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		AckWait:       100 * time.Millisecond,
-	})
+	config.Name = fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID())
+	config.FilterSubject = t.subject
+
+	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, config)
 	if err != nil {
 		logger.Error("failed to create consumer", zap.Error(err))
 		return fmt.Errorf("failed to create consumer: %w", err)
@@ -127,6 +122,10 @@ func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, revis
 			defer deleteCtxCancel()
 
 			if err := t.connection.ActorLivenessKV.Delete(deleteCtx, key); err != nil {
+				if err == nats.ErrConnectionClosed {
+					logger.Debug("connection closed, skipping delete", zap.String("key", key))
+					return
+				}
 				logger.Error("failed to delete liveness entry", zap.String("key", key), zap.Error(err))
 			}
 			return

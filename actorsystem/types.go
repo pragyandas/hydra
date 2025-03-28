@@ -15,17 +15,16 @@ import (
 )
 
 type Config struct {
-	ID                           string
-	Region                       string
-	MessageStreamConfig          jetstream.StreamConfig
-	KVConfig                     jetstream.KeyValueConfig
-	ActorLivenessKVConfig        jetstream.KeyValueConfig
-	ActorConfig                  actor.Config
-	ControlPlaneConfig           controlplane.Config
-	NatsURL                      string
-	ConnectOpts                  []nats.Option
-	RetryInterval                time.Duration
-	ActorResurrectionConcurrency int
+	ID                    string
+	Region                string
+	MessageStreamConfig   jetstream.StreamConfig
+	KVConfig              jetstream.KeyValueConfig
+	ActorLivenessKVConfig jetstream.KeyValueConfig
+	ActorConfig           actor.Config
+	ControlPlaneConfig    controlplane.Config
+	NatsURL               string
+	ConnectOpts           []nats.Option
+	RetryInterval         time.Duration
 }
 
 func DefaultConfig() *Config {
@@ -36,11 +35,18 @@ func DefaultConfig() *Config {
 		ActorConfig: actor.Config{
 			HeartbeatInterval:         GetActorLivenessHeartbeatInterval(),
 			HeartbeatsMissedThreshold: GetHeartbeatsMissedThreshold(),
+			ConsumerConfig: jetstream.ConsumerConfig{
+				MaxDeliver:    -1,
+				MaxAckPending: 1,
+				DeliverPolicy: jetstream.DeliverNewPolicy,
+				AckPolicy:     jetstream.AckExplicitPolicy,
+				AckWait:       100 * time.Millisecond,
+			},
 		},
 		MessageStreamConfig: jetstream.StreamConfig{
 			Name:     GetStreamName(),
 			Subjects: []string{fmt.Sprintf("%s.>", GetStreamName())},
-			Storage:  jetstream.MemoryStorage,
+			Storage:  jetstream.FileStorage,
 		},
 		KVConfig: jetstream.KeyValueConfig{
 			Bucket:      GetKVBucket(),
@@ -75,8 +81,7 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
-		RetryInterval:                5 * time.Second,
-		ActorResurrectionConcurrency: 10,
+		RetryInterval: 5 * time.Second,
 	}
 }
 

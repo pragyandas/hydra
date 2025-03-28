@@ -90,7 +90,7 @@ func (a *Actor) Start(ctx context.Context, config Config) error {
 	go a.processMessages(ctx)
 
 	// Setup message transport
-	if err := a.transport.Setup(ctx, config.HeartbeatInterval); err != nil {
+	if err := a.transport.Setup(ctx, config.HeartbeatInterval, config.ConsumerConfig); err != nil {
 		a.cancel()
 		return fmt.Errorf("failed to start transport for actor %s: %w", a.id, err)
 	}

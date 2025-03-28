@@ -8,6 +8,7 @@ type ActorTypeConfig struct {
 	MessageHandlerFactory MessageHandlerFactory
 	MessageErrorHandler   ErrorHandler
 	StateSerializer       StateSerializer
+	ActorConfig           Config
 }
 
 // ActorType defines the behavior of an actor type
@@ -16,6 +17,7 @@ type ActorType struct {
 	MessageHandlerFactory MessageHandlerFactory
 	MessageErrorHandler   ErrorHandler
 	StateSerializer       StateSerializer
+	ActorConfig           Config
 }
 
 func NewActorType(name string, opts ...ActorTypeOption) (*ActorType, error) {
@@ -49,5 +51,11 @@ func WithMessageErrorHandler(messageErrorHandler ErrorHandler) ActorTypeOption {
 func WithStateSerializer(stateSerializer StateSerializer) ActorTypeOption {
 	return func(a *ActorType) {
 		a.StateSerializer = stateSerializer
+	}
+}
+
+func WithActorConfig(actorConfig Config) ActorTypeOption {
+	return func(a *ActorType) {
+		a.ActorConfig = actorConfig
 	}
 }

@@ -5,7 +5,6 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -19,14 +18,8 @@ func newTracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
 		return nil, err
 	}
 
-	consoleExporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-	if err != nil {
-		return nil, err
-	}
-
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(traceExporter),
-		sdktrace.WithBatcher(consoleExporter),
 	)
 
 	return tracerProvider, nil

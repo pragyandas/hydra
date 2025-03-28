@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/transport"
 )
 
 type Config struct {
 	HeartbeatInterval         time.Duration
 	HeartbeatsMissedThreshold int
+	ConsumerConfig            jetstream.ConsumerConfig
 }
 
 type ActorOption func(*Actor)
 
 type ActorTransport interface {
-	Setup(ctx context.Context, heartbeatInterval time.Duration) error
+	Setup(ctx context.Context, heartbeatInterval time.Duration, consumerConfig jetstream.ConsumerConfig) error
 	SendMessage(actorType string, actorID string, msg []byte) error
 }
 

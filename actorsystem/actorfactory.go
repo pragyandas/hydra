@@ -44,11 +44,29 @@ func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 			WithStateManager(stateManager).
 			WithErrorHandler(actorType.MessageErrorHandler)
 
-		err = actor.Start(ctx, config)
+		actorConfig := mergeActorConfig(actorType.ActorConfig, config)
+
+		err = actor.Start(ctx, actorConfig)
 		if err != nil {
 			logger.Error("failed to start actor", zap.Error(err))
 			return nil, err
 		}
 		return actor, nil
 	}
+}
+
+func mergeActorConfig(typeConfig, systemConfig actor.Config) actor.Config {
+	merged := systemConfig
+	if typeConfig.HeartbeatInterval != 0 {
+		merged.HeartbeatInterval = typeConfig.HeartbeatInterval
+	}
+	if typeConfig.HeartbeatsMissedThreshold != 0 {
+		merged.HeartbeatsMissedThreshold = typeConfig.HeartbeatsMissedThreshold
+	}
+
+	// Consumer config is not merged, it is set in entirety from the type config
+	if typeConfig.ConsumerConfig.MaxDeliver != 0 {
+		merged.ConsumerConfig = typeConfig.ConsumerConfig
+	}
+	return merged
 }
