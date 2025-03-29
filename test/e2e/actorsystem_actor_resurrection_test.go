@@ -1,6 +1,7 @@
 package actorsystemtest
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -11,8 +12,16 @@ import (
 )
 
 func TestActorResurrection(t *testing.T) {
-	_, system, close := utils.SetupTestActorsystem(t)
-	defer close()
+	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	system, close := utils.SetupTestActorsystem(t)
+	if err := system.Start(testContext); err != nil {
+		t.Fatalf("Failed to start actor system: %v", err)
+	}
+	defer func() {
+		system.Close(testContext)
+		close()
+		cancel()
+	}()
 
 	const (
 		numMessages    = 100

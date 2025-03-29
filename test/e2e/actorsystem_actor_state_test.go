@@ -1,6 +1,7 @@
 package actorsystemtest
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -15,8 +16,16 @@ type ActorState struct {
 }
 
 func TestActorStateUpdate(t *testing.T) {
-	ctx, system, close := utils.SetupTestActorsystem(t)
-	defer close()
+	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	system, close := utils.SetupTestActorsystem(t)
+	if err := system.Start(testContext); err != nil {
+		t.Fatalf("Failed to start actor system: %v", err)
+	}
+	defer func() {
+		system.Close(testContext)
+		close()
+		cancel()
+	}()
 
 	testDuration := *utils.TestDurationFlag
 
@@ -25,7 +34,7 @@ func TestActorStateUpdate(t *testing.T) {
 
 	pingHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
-			actorState, err := self.GetState(ctx)
+			actorState, err := self.GetState(testContext)
 			if err != nil {
 				t.Errorf("failed to get actor state: %v", err)
 			}
@@ -36,7 +45,7 @@ func TestActorStateUpdate(t *testing.T) {
 				state = actorState.(ActorState)
 				state.Count++
 			}
-			self.SetState(ctx, state)
+			self.SetState(testContext, state)
 			if time.Now().Before(endTime) {
 				return self.SendMessage("pong", "1", msg)
 			}
@@ -46,7 +55,7 @@ func TestActorStateUpdate(t *testing.T) {
 
 	pongHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
-			actorState, err := self.GetState(ctx)
+			actorState, err := self.GetState(testContext)
 			if err != nil {
 				t.Errorf("failed to get actor state: %v", err)
 			}
@@ -57,7 +66,7 @@ func TestActorStateUpdate(t *testing.T) {
 				state = actorState.(ActorState)
 				state.Count++
 			}
-			self.SetState(ctx, state)
+			self.SetState(testContext, state)
 			if time.Now().Before(endTime) {
 				return self.SendMessage("ping", "1", msg)
 			}
@@ -101,11 +110,11 @@ func TestActorStateUpdate(t *testing.T) {
 
 	duration := time.Since(startTime)
 
-	finalPingState, err := pingActor.GetState(ctx)
+	finalPingState, err := pingActor.GetState(testContext)
 	if err != nil {
 		t.Errorf("failed to get ping actor state: %v", err)
 	}
-	finalPongState, err := pongActor.GetState(ctx)
+	finalPongState, err := pongActor.GetState(testContext)
 	if err != nil {
 		t.Errorf("failed to get pong actor state: %v", err)
 	}

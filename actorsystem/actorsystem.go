@@ -26,66 +26,56 @@ type ActorSystem struct {
 	telemetryShutdown     TelemetryShutdown
 }
 
-func NewActorSystem(parentCtx context.Context, config *Config) (*ActorSystem, error) {
+func NewActorSystem(config *Config) (*ActorSystem, error) {
 	// TODO: Merge partial config with default config
 	if config == nil {
 		config = DefaultConfig()
 	}
 
-	ctx, cancel := context.WithCancel(parentCtx)
-	ctx = context.WithValue(ctx, idKey, config.ID)
-
-	logger := telemetry.GetLogger(ctx, "actorsystem")
-	logger.Info("starting actor system")
-
-	shutdown, err := telemetry.SetupOTelSDK(ctx)
-	if err != nil {
-		logger.Error("failed to setup OTel SDK", zap.Error(err))
-		cancel()
-		return nil, fmt.Errorf("failed to setup OTel SDK: %w", err)
-	}
-
-	connection, err := connection.New(ctx, config.NatsURL, config.ConnectOpts)
-	if err != nil {
-		logger.Error("failed to create connection", zap.Error(err))
-		cancel()
-		return nil, fmt.Errorf("failed to create connection: %w", err)
-	}
-
 	system := &ActorSystem{
 		id:                    config.ID,
-		connection:            connection,
 		config:                config,
 		actors:                make(map[string]any),
-		ctxCancel:             cancel,
 		actorTypes:            make(map[string]*actor.ActorType),
 		actorResurrectionChan: make(chan actor.ActorId),
-		telemetryShutdown:     shutdown,
-	}
-
-	system.cp, err = controlplane.New(system.connection, system.actorResurrectionChan)
-	if err != nil {
-		logger.Error("failed to create control plane", zap.Error(err))
-		return nil, fmt.Errorf("failed to create control plane: %w", err)
-	}
-
-	if err := system.start(ctx); err != nil {
-		logger.Error("failed to initialize actor system", zap.Error(err))
-		system.Close(ctx)
-		return nil, err
 	}
 
 	return system, nil
 }
 
-func (system *ActorSystem) start(ctx context.Context) error {
+func (system *ActorSystem) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	ctx = context.WithValue(ctx, idKey, system.config.ID)
+	system.ctxCancel = cancel
+
+	logger := telemetry.GetLogger(ctx, "actorsystem-start")
+	logger.Info("starting actor system")
+
+	var err error
+	system.telemetryShutdown, err = telemetry.SetupOTelSDK(ctx)
+	if err != nil {
+		logger.Error("failed to setup OTel SDK", zap.Error(err))
+		cancel()
+		return fmt.Errorf("failed to setup OTel SDK: %w", err)
+	}
+
+	system.connection, err = connection.New(ctx, system.config.NatsURL, system.config.ConnectOpts)
+	if err != nil {
+		logger.Error("failed to create connection", zap.Error(err))
+		cancel()
+		return fmt.Errorf("failed to create connection: %w", err)
+	}
+
+	system.cp, err = controlplane.New(system.connection, system.actorResurrectionChan)
+	if err != nil {
+		logger.Error("failed to create control plane", zap.Error(err))
+		return fmt.Errorf("failed to create control plane: %w", err)
+	}
+
 	tracer := telemetry.GetTracer()
 	ctx, span := tracer.Start(ctx, "actorsystem-start")
 	defer span.End()
 
-	logger := telemetry.GetLogger(ctx, "actorsystem-start")
-
-	var err error
 	if err = system.connection.Initialize(ctx, connection.Config{
 		MessageStreamConfig:   system.config.MessageStreamConfig,
 		KVConfig:              system.config.KVConfig,

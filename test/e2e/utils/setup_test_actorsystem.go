@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"context"
 	"flag"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ import (
 
 var TestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
 
-func SetupTestActorsystem(t *testing.T) (context.Context, *actorsystem.ActorSystem, func()) {
+func SetupTestActorsystem(t *testing.T) (*actorsystem.ActorSystem, func()) {
 	opts := &server.Options{
 		Port:      -1,
 		Host:      "127.0.0.1",
@@ -67,19 +66,15 @@ func SetupTestActorsystem(t *testing.T) (context.Context, *actorsystem.ActorSyst
 		js.DeleteStream(stream)
 	}
 
-	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-
-	system, err := actorsystem.NewActorSystem(testContext, config)
+	system, err := actorsystem.NewActorSystem(config)
 	if err != nil {
 		t.Fatalf("Failed to create actor system: %v", err)
 	}
 
 	close := func() {
-		system.Close(testContext)
-		cancel()
 		nc.Close()
 		ns.Shutdown()
 	}
 
-	return testContext, system, close
+	return system, close
 }
