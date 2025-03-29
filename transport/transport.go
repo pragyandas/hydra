@@ -20,6 +20,11 @@ type ActorTransport struct {
 	messageSender MessageSender
 }
 
+type ConsumerConfig struct {
+	MaxDeliver int
+	AckWait    time.Duration
+}
+
 func NewActorTransport(connection *connection.Connection, getKVKey GetKVKey, actor Actor) (*ActorTransport, error) {
 	return &ActorTransport{
 		connection: connection,
@@ -28,7 +33,7 @@ func NewActorTransport(connection *connection.Connection, getKVKey GetKVKey, act
 	}, nil
 }
 
-func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Duration, consumerConfig jetstream.ConsumerConfig) error {
+func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Duration, consumerConfig ConsumerConfig) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup")
 
 	kvCtx, kvCtxCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -80,13 +85,22 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	return nil
 }
 
-func (t *ActorTransport) setupConsumer(ctx context.Context, config jetstream.ConsumerConfig) error {
+func (t *ActorTransport) setupConsumer(ctx context.Context, config ConsumerConfig) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
 
-	config.Name = fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID())
-	config.FilterSubject = t.subject
-
-	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, config)
+	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
+		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
+		FilterSubject: t.subject,
+		MaxDeliver:    config.MaxDeliver, // -1 means unlimited redelivery
+		AckWait:       config.AckWait,    // Redlivery will be triggered after this time
+		// The below properties cannot be set by the user
+		// as this is what makes actor process messages
+		// in the order they are received and also
+		// ensures at-least-once delivery
+		MaxAckPending: 1,
+		DeliverPolicy: jetstream.DeliverNewPolicy,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+	})
 	if err != nil {
 		logger.Error("failed to create consumer", zap.Error(err))
 		return fmt.Errorf("failed to create consumer: %w", err)

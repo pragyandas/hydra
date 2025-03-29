@@ -181,7 +181,7 @@ func (system *ActorSystem) RegisterActorType(name string, config actor.ActorType
 		actor.WithMessageHandlerFactory(config.MessageHandlerFactory),
 		actor.WithMessageErrorHandler(config.MessageErrorHandler),
 		actor.WithStateSerializer(config.StateSerializer),
-		actor.WithActorConfig(system.config.ActorConfig),
+		actor.WithActorConfig(config.ActorConfig),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create actor type %s: %w", name, err)

@@ -35,12 +35,9 @@ func DefaultConfig() *Config {
 		ActorConfig: actor.Config{
 			HeartbeatInterval:         GetActorLivenessHeartbeatInterval(),
 			HeartbeatsMissedThreshold: GetHeartbeatsMissedThreshold(),
-			ConsumerConfig: jetstream.ConsumerConfig{
-				MaxDeliver:    -1,
-				MaxAckPending: 1,
-				DeliverPolicy: jetstream.DeliverNewPolicy,
-				AckPolicy:     jetstream.AckExplicitPolicy,
-				AckWait:       100 * time.Millisecond,
+			ConsumerConfig: actor.ConsumerConfig{
+				MaxDeliver: -1,
+				AckWait:    100 * time.Millisecond,
 			},
 		},
 		MessageStreamConfig: jetstream.StreamConfig{
@@ -72,7 +69,7 @@ func DefaultConfig() *Config {
 				HeartbeatInterval: 1 * time.Second,
 			},
 			BucketManagerConfig: controlplane.BucketManagerConfig{
-				NumBuckets:          1,
+				NumBuckets:          16,
 				SafetyCheckInterval: 5 * time.Second,
 				KVConfig: jetstream.KeyValueConfig{
 					Bucket:      GetBucketOwnershipKVBucket(),

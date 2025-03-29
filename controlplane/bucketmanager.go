@@ -218,6 +218,7 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 
 	region, systemID := common.GetRegion(), common.GetSystemID()
 
+	// TODO: Make this . separated
 	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), region, bucket)
 	ownership := &BucketOwnership{
 		Owner:          systemID,
@@ -367,7 +368,7 @@ func (bm *BucketManager) publishInterest(bucketID int, owner string) error {
 
 func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
 	h := fnv.New32a()
-	h.Write([]byte(fmt.Sprintf("%s/%s", actorType, actorID)))
+	h.Write([]byte(fmt.Sprintf("%s.%s", actorType, actorID)))
 	return int(h.Sum32()) % bm.numBuckets
 }
 

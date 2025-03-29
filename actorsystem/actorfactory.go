@@ -14,7 +14,7 @@ type ActorFactory func(id string,
 	stateManagerFactory actor.StateManagerFactory,
 ) (*actor.Actor, error)
 
-func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
+func newActorFactory(ctx context.Context, defaultConfig actor.Config) ActorFactory {
 	return func(id string,
 		actorType actor.ActorType,
 		transportFactory actor.TransportFactory,
@@ -44,7 +44,7 @@ func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 			WithStateManager(stateManager).
 			WithErrorHandler(actorType.MessageErrorHandler)
 
-		actorConfig := mergeActorConfig(actorType.ActorConfig, config)
+		actorConfig := mergeActorConfig(actorType.ActorConfig, defaultConfig)
 
 		err = actor.Start(ctx, actorConfig)
 		if err != nil {
@@ -55,8 +55,8 @@ func newActorFactory(ctx context.Context, config actor.Config) ActorFactory {
 	}
 }
 
-func mergeActorConfig(typeConfig, systemConfig actor.Config) actor.Config {
-	merged := systemConfig
+func mergeActorConfig(typeConfig, defaultConfig actor.Config) actor.Config {
+	merged := defaultConfig
 	if typeConfig.HeartbeatInterval != 0 {
 		merged.HeartbeatInterval = typeConfig.HeartbeatInterval
 	}
@@ -64,8 +64,8 @@ func mergeActorConfig(typeConfig, systemConfig actor.Config) actor.Config {
 		merged.HeartbeatsMissedThreshold = typeConfig.HeartbeatsMissedThreshold
 	}
 
-	// Consumer config is not merged, it is set in entirety from the type config
-	if typeConfig.ConsumerConfig.MaxDeliver != 0 {
+	// Consumer config is not merged, it is set in entirety as
+	if typeConfig.ConsumerConfig != (actor.ConsumerConfig{}) {
 		merged.ConsumerConfig = typeConfig.ConsumerConfig
 	}
 	return merged
