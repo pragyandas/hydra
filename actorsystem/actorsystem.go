@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/common/utils"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/controlplane"
 	"github.com/pragyandas/hydra/telemetry"
@@ -96,12 +97,12 @@ func (system *ActorSystem) start(ctx context.Context) error {
 
 	system.actorFactory = newActorFactory(ctx, system.config.ActorConfig)
 
-	go system.handleActorResurrection(ctx)
-
 	if err := system.cp.Start(ctx, system.config.ControlPlaneConfig); err != nil {
 		logger.Error("failed to start control plane", zap.Error(err))
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
+
+	go system.handleActorResurrection(ctx, system.config.ActorResurrectionConcurrency)
 
 	logger.Info("started actor system")
 
@@ -130,8 +131,11 @@ func (system *ActorSystem) Close(ctx context.Context) {
 	}
 }
 
-func (system *ActorSystem) handleActorResurrection(ctx context.Context) {
+func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurrency int) {
 	logger := telemetry.GetLogger(ctx, "actorsystem-handle-actor-resurrection")
+
+	resurrectionQueue := utils.NewTaskQueue(concurrency)
+	go resurrectionQueue.Run(ctx)
 
 	for {
 		select {
@@ -143,20 +147,22 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context) {
 				return
 			}
 
-			// TODO: Add a semaphore to limit the number of concurrent actor creations
-			go func(req actor.ActorId) {
-				if _, err := system.CreateActor(req.Type, req.ID); err != nil {
-					logger.Error("failed to create actor",
-						zap.String("type", req.Type),
-						zap.String("id", req.ID),
-						zap.Error(err))
-				} else {
-					logger.Info("actor resurrected successfully",
-						zap.String("type", req.Type),
-						zap.String("id", req.ID))
-				}
-			}(req)
+			newTask := utils.NewTask(fmt.Sprintf("%s.%s", req.Type, req.ID),
+				func() {
+					if _, err := system.CreateActor(req.Type, req.ID); err != nil {
+						logger.Error("failed to create actor",
+							zap.String("type", req.Type),
+							zap.String("id", req.ID),
+							zap.Error(err))
+					} else {
+						logger.Info("actor resurrected successfully",
+							zap.String("type", req.Type),
+							zap.String("id", req.ID))
+					}
+				},
+			)
 
+			resurrectionQueue.Add(ctx, newTask)
 		}
 	}
 

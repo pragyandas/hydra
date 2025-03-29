@@ -15,16 +15,17 @@ import (
 )
 
 type Config struct {
-	ID                    string
-	Region                string
-	MessageStreamConfig   jetstream.StreamConfig
-	KVConfig              jetstream.KeyValueConfig
-	ActorLivenessKVConfig jetstream.KeyValueConfig
-	ActorConfig           actor.Config
-	ControlPlaneConfig    controlplane.Config
-	NatsURL               string
-	ConnectOpts           []nats.Option
-	RetryInterval         time.Duration
+	ID                           string
+	Region                       string
+	MessageStreamConfig          jetstream.StreamConfig
+	KVConfig                     jetstream.KeyValueConfig
+	ActorLivenessKVConfig        jetstream.KeyValueConfig
+	ActorConfig                  actor.Config
+	ControlPlaneConfig           controlplane.Config
+	NatsURL                      string
+	ConnectOpts                  []nats.Option
+	RetryInterval                time.Duration
+	ActorResurrectionConcurrency int
 }
 
 func DefaultConfig() *Config {
@@ -78,7 +79,8 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
-		RetryInterval: 5 * time.Second,
+		RetryInterval:                5 * time.Second,
+		ActorResurrectionConcurrency: 10,
 	}
 }
 

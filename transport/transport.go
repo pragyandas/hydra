@@ -93,6 +93,7 @@ func (t *ActorTransport) setupConsumer(ctx context.Context, config ConsumerConfi
 		FilterSubject: t.subject,
 		MaxDeliver:    config.MaxDeliver, // -1 means unlimited redelivery
 		AckWait:       config.AckWait,    // Redlivery will be triggered after this time
+
 		// The below properties cannot be set by the user
 		// as this is what makes actor process messages
 		// in the order they are received and also

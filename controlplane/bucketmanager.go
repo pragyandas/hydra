@@ -95,7 +95,6 @@ func (bm *BucketManager) Stop() {
 func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) error {
 	region, systemID := common.GetRegion(), common.GetSystemID()
 
-	// TODO: Make the nc subject configurable
 	sub, err := bm.connection.NC.Subscribe(fmt.Sprintf("bucketinterest.%s.%s", region, systemID), func(msg *nats.Msg) {
 		var interest BucketInterest
 		if err := json.Unmarshal(msg.Data, &interest); err != nil {
