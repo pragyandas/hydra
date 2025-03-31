@@ -13,14 +13,25 @@ import (
 	"go.uber.org/zap"
 )
 
+type ActorStatus int
+
+const (
+	ActorStatusStarting ActorStatus = iota
+	ActorStatusStarted
+)
+
+type systemActor struct {
+	actor  *actor.Actor
+	status ActorStatus
+}
+
 type ActorSystem struct {
-	id                    string
-	connection            *connection.Connection
 	config                *Config
-	actors                map[string]any
+	connection            *connection.Connection
 	cp                    *controlplane.ControlPlane
 	ctxCancel             context.CancelFunc
 	actorFactory          ActorFactory
+	actors                map[string]*systemActor
 	actorTypes            map[string]*actor.ActorType
 	actorResurrectionChan chan actor.ActorId
 	telemetryShutdown     TelemetryShutdown
@@ -33,11 +44,9 @@ func NewActorSystem(config *Config) (*ActorSystem, error) {
 	}
 
 	system := &ActorSystem{
-		id:                    config.ID,
-		config:                config,
-		actors:                make(map[string]any),
-		actorTypes:            make(map[string]*actor.ActorType),
-		actorResurrectionChan: make(chan actor.ActorId),
+		config:     config,
+		actors:     make(map[string]*systemActor),
+		actorTypes: make(map[string]*actor.ActorType),
 	}
 
 	return system, nil
@@ -58,6 +67,9 @@ func (system *ActorSystem) Start(ctx context.Context) error {
 		cancel()
 		return fmt.Errorf("failed to setup OTel SDK: %w", err)
 	}
+	tracer := telemetry.GetTracer()
+	ctx, span := tracer.Start(ctx, "actorsystem-start")
+	defer span.End()
 
 	system.connection, err = connection.New(ctx, system.config.NatsURL, system.config.ConnectOpts)
 	if err != nil {
@@ -65,16 +77,6 @@ func (system *ActorSystem) Start(ctx context.Context) error {
 		cancel()
 		return fmt.Errorf("failed to create connection: %w", err)
 	}
-
-	system.cp, err = controlplane.New(system.connection, system.actorResurrectionChan)
-	if err != nil {
-		logger.Error("failed to create control plane", zap.Error(err))
-		return fmt.Errorf("failed to create control plane: %w", err)
-	}
-
-	tracer := telemetry.GetTracer()
-	ctx, span := tracer.Start(ctx, "actorsystem-start")
-	defer span.End()
 
 	if err = system.connection.Initialize(ctx, connection.Config{
 		MessageStreamConfig:   system.config.MessageStreamConfig,
@@ -87,12 +89,19 @@ func (system *ActorSystem) Start(ctx context.Context) error {
 
 	system.actorFactory = newActorFactory(ctx, system.config.ActorConfig)
 
+	system.actorResurrectionChan = make(chan actor.ActorId)
+	go system.handleActorResurrection(ctx, system.config.ActorResurrectionConcurrency)
+
+	system.cp, err = controlplane.New(system.connection, system.actorResurrectionChan)
+	if err != nil {
+		logger.Error("failed to create control plane", zap.Error(err))
+		return fmt.Errorf("failed to create control plane: %w", err)
+	}
+
 	if err := system.cp.Start(ctx, system.config.ControlPlaneConfig); err != nil {
 		logger.Error("failed to start control plane", zap.Error(err))
 		return fmt.Errorf("failed to start control plane: %w", err)
 	}
-
-	go system.handleActorResurrection(ctx, system.config.ActorResurrectionConcurrency)
 
 	logger.Info("started actor system")
 
@@ -103,6 +112,17 @@ func (system *ActorSystem) Close(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "actorsystem-close")
 	if system.ctxCancel != nil {
 		system.ctxCancel()
+	}
+
+	if system.actors != nil {
+		for _, status := range system.actors {
+			if status.actor != nil {
+				status.actor.Close()
+			}
+		}
+		// Reset the actors map
+		system.actors = make(map[string]*systemActor)
+		logger.Info("gracefully closed all actors")
 	}
 
 	if system.cp != nil {
@@ -189,8 +209,13 @@ func (system *ActorSystem) RegisterActorType(name string, config actor.ActorType
 
 func (system *ActorSystem) CreateActor(actorType string, id string) (*actor.Actor, error) {
 	key := fmt.Sprintf("%s.%s", actorType, id)
-	if _, exists := system.actors[key]; exists {
-		return nil, fmt.Errorf("actor %s already exists", key)
+	if systemActor, exists := system.actors[key]; exists {
+		if systemActor.status == ActorStatusStarting {
+			return nil, fmt.Errorf("actor %s creation in progress", key)
+		}
+		if systemActor.actor != nil {
+			return systemActor.actor, nil
+		}
 	}
 
 	aType, exists := system.actorTypes[actorType]
@@ -198,7 +223,7 @@ func (system *ActorSystem) CreateActor(actorType string, id string) (*actor.Acto
 		return nil, fmt.Errorf("actor type %s not registered", actorType)
 	}
 
-	system.actors[key] = struct{}{}
+	system.actors[key] = &systemActor{status: ActorStatusStarting}
 
 	actor, err := system.actorFactory(id,
 		*aType,
@@ -215,13 +240,19 @@ func (system *ActorSystem) CreateActor(actorType string, id string) (*actor.Acto
 		delete(system.actors, key)
 	})
 
+	system.actors[key] = &systemActor{actor: actor, status: ActorStatusStarted}
 	return actor, nil
 }
 
 func (system *ActorSystem) GetOrCreateActor(actorType string, id string) (*actor.Actor, error) {
 	key := fmt.Sprintf("%s.%s", actorType, id)
-	if _, exists := system.actors[key]; !exists {
-		return system.CreateActor(actorType, id)
+	if systemActor, exists := system.actors[key]; exists {
+		if systemActor.actor != nil {
+			return systemActor.actor, nil
+		}
+		if systemActor.status == ActorStatusStarting {
+			return nil, fmt.Errorf("actor %s creation is already in progress", key)
+		}
 	}
-	return system.actors[key].(*actor.Actor), nil
+	return system.CreateActor(actorType, id)
 }
