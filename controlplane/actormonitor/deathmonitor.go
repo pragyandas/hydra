@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/actor"
@@ -34,17 +35,18 @@ func NewActorDeathMonitor(connection *connection.Connection, bucketID int, actor
 }
 
 func (m *ActorDeathMonitor) Start(ctx context.Context) error {
-	deadActors, err := m.findDeadActors(ctx)
-	if err != nil {
+	// Discover all dead actors for the bucket
+	m.mu.Lock()
+	if err := m.findDeadActors(ctx); err != nil {
 		return err
 	}
-	m.deadActors = deadActors
+	m.mu.Unlock()
 
 	go m.monitorDeadActors(ctx)
 	return nil
 }
 
-func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) (map[string]struct{}, error) {
+func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 	logger := telemetry.GetLogger(ctx, "death-monitor-find-dead-actors")
 
 	region := common.GetRegion()
@@ -55,39 +57,32 @@ func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) (map[string]stru
 	registrations, err := m.connection.ActorKV.ListKeys(ctx)
 	if err != nil {
 		logger.Error("failed to get actor registrations", zap.Error(err))
-		return nil, fmt.Errorf("failed to get actor registrations: %w", err)
+		return fmt.Errorf("failed to get actor registrations: %w", err)
 	}
 
-	deadActors := make(map[string]struct{})
 	for key := range registrations.Keys() {
-		// It is unlikely that the actor registration key will not have the prefix
-		// but we check to be safe
 		if !strings.HasPrefix(key, registrationPrefix) {
 			continue
 		}
 
-		_, err := m.connection.ActorLivenessKV.Get(ctx, key)
-		// No liveness entry -> actor is dead
-		if err != nil {
-			if err == jetstream.ErrKeyNotFound {
-				parts := strings.Split(key, ".")
-				if len(parts) < 4 {
-					logger.Error("invalid actor key", zap.String("key", key))
-					continue
-				}
-				actorType := parts[2]
-				actorId := parts[3]
-				deadActors[fmt.Sprintf("%s.%s", actorType, actorId)] = struct{}{}
+		entry, err := m.connection.ActorLivenessKV.Get(ctx, key)
+
+		// If actor is registered, but liveness entry is not found or nil, it is dead
+		if err != nil || entry == nil {
+			logger.Debug("dead actor detected", zap.String("key", key))
+			parts := strings.Split(key, ".")
+			if len(parts) < 4 {
+				logger.Error("invalid actor key", zap.String("key", key))
 				continue
 			}
-
-			// We don't return this error as we want to continue monitoring for other dead actors
-			logger.Error("failed to get actor liveness entry", zap.Error(err))
-			continue
+			actorType := parts[2]
+			actorId := parts[3]
+			actorKey := fmt.Sprintf("%s.%s", actorType, actorId)
+			m.onActorDeath(ctx, actorKey)
 		}
 	}
 
-	return deadActors, nil
+	return nil
 }
 
 func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
@@ -103,22 +98,21 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 	}
 	defer watcher.Stop()
 
-	// May be a good idea to make it configurable
-	// ticker := time.NewTicker(10 * time.Second)
-	// defer ticker.Stop()
+	// May be a good idea to make this configurable
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		// case <-ticker.C:
-		// 	// Safety check to ensure we are resilient to missing KV updates
-		// 	if deadActors, err := m.findDeadActors(ctx); err == nil {
-		// 		m.mu.Lock()
-		// 		m.deadActors = deadActors
-		// 		m.mu.Unlock()
-		// 		logger.Debug("refreshed dead actors list", zap.Int("count", len(deadActors)))
-		// 	}
+		case <-ticker.C:
+			// Safety check to ensure we are resilient to missing KV updates
+			m.mu.Lock()
+			if err := m.findDeadActors(ctx); err != nil {
+				logger.Error("failed to refresh dead actors", zap.Error(err))
+			}
+			m.mu.Unlock()
 		case entry := <-watcher.Updates():
 			if entry == nil {
 				continue
@@ -136,7 +130,7 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 			m.mu.Lock()
 			switch entry.Operation() {
 			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
-				m.onActorDeath(ctx, actorType, actorId)
+				m.onActorDeath(ctx, actorKey)
 				logger.Info("actor marked as dead", zap.String("actor", actorKey))
 			case jetstream.KeyValuePut:
 				if _, exists := m.deadActors[actorKey]; exists {
@@ -149,10 +143,12 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 	}
 }
 
-func (m *ActorDeathMonitor) onActorDeath(ctx context.Context, actorType, actorID string) {
+func (m *ActorDeathMonitor) onActorDeath(ctx context.Context, actorKey string) {
 	logger := telemetry.GetLogger(ctx, "death-monitor-on-actor-death")
 
-	actorKey := fmt.Sprintf("%s.%s", actorType, actorID)
+	parts := strings.Split(actorKey, ".")
+	actorType := parts[0]
+	actorID := parts[1]
 
 	m.deadActors[actorKey] = struct{}{}
 
@@ -160,6 +156,8 @@ func (m *ActorDeathMonitor) onActorDeath(ctx context.Context, actorType, actorID
 	if _, exists := m.mailboxMonitors[actorKey]; !exists {
 		monitor := NewActorMailboxMonitor(m.connection, actorType, actorID)
 		m.mailboxMonitors[actorKey] = monitor
+
+		logger.Info("starting mailbox monitor", zap.String("actor", actorKey))
 
 		go monitor.Start(ctx, func() {
 			// Callback function to request actor resurrection
