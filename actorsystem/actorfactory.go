@@ -38,15 +38,16 @@ func newActorFactory(ctx context.Context, defaultConfig actor.Config) ActorFacto
 		}
 		stateManager := stateManagerFactory(actor, actorType.StateSerializer)
 
+		actorConfig := mergeActorConfig(actorType.ActorConfig, defaultConfig)
+
 		// Build actor with components
 		actor = actor.WithMessageHandler(messageHandler).
 			WithTransport(transport).
 			WithStateManager(stateManager).
-			WithErrorHandler(actorType.MessageErrorHandler)
+			WithErrorHandler(actorType.MessageErrorHandler).
+			WithConfig(actorConfig)
 
-		actorConfig := mergeActorConfig(actorType.ActorConfig, defaultConfig)
-
-		err = actor.Start(ctx, actorConfig)
+		err = actor.Start(ctx)
 		if err != nil {
 			logger.Error("failed to start actor", zap.Error(err))
 			return nil, err

@@ -11,6 +11,7 @@ import (
 type Actor struct {
 	id            string
 	actorType     string
+	config        Config
 	handler       MessageHandler
 	msgCh         chan Message
 	transport     ActorTransport
@@ -46,6 +47,11 @@ func (a *Actor) WithCloseCallback(callback func()) *Actor {
 	return a
 }
 
+func (a *Actor) WithConfig(config Config) *Actor {
+	a.config = config
+	return a
+}
+
 func NewActor(
 	ctx context.Context,
 	id string,
@@ -73,7 +79,7 @@ func NewActor(
 	return actor, nil
 }
 
-func (a *Actor) Start(ctx context.Context, config Config) error {
+func (a *Actor) Start(ctx context.Context) error {
 	logger := telemetry.GetLogger(ctx, "actor-start")
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -90,7 +96,7 @@ func (a *Actor) Start(ctx context.Context, config Config) error {
 	go a.processMessages(ctx)
 
 	// Setup message transport
-	if err := a.transport.Setup(ctx, config.HeartbeatInterval, config.ConsumerConfig); err != nil {
+	if err := a.transport.Setup(ctx, a.config.HeartbeatInterval, a.config.ConsumerConfig); err != nil {
 		a.cancel()
 		return fmt.Errorf("failed to start transport for actor %s: %w", a.id, err)
 	}
