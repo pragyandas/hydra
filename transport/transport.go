@@ -89,7 +89,7 @@ func (t *ActorTransport) setupConsumer(ctx context.Context, config ConsumerConfi
 	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
 
 	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
-		Name:          fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
+		Durable:       fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
 		FilterSubject: t.subject,
 		MaxDeliver:    config.MaxDeliver, // -1 means unlimited redelivery
 		AckWait:       config.AckWait,    // Redlivery will be triggered after this time

@@ -56,7 +56,7 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 			}
 
 			if info.NumPending > 0 {
-				logger.Info("dead actor has pending messages",
+				logger.Debug("dead actor has pending messages",
 					zap.String("actor", fmt.Sprintf("%s/%s", m.actorType, m.actorID)),
 					zap.Uint64("pending", info.NumPending))
 

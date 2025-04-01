@@ -66,10 +66,24 @@ func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 		}
 
 		entry, err := m.connection.ActorLivenessKV.Get(ctx, key)
-
+		isActorDead := false
 		// If actor is registered, but liveness entry is not found or nil, it is dead
-		if err != nil || entry == nil {
-			logger.Debug("dead actor detected", zap.String("key", key))
+		if err != nil {
+			if err == jetstream.ErrKeyNotFound {
+				logger.Debug("actor liveness entry not found", zap.String("key", key))
+				isActorDead = true
+			} else {
+				logger.Error("failed to get actor liveness", zap.Error(err))
+				continue
+			}
+		} else {
+			if entry == nil {
+				logger.Debug("actor liveness entry is nil", zap.String("key", key))
+				isActorDead = true
+			}
+		}
+
+		if isActorDead {
 			parts := strings.Split(key, ".")
 			if len(parts) < 4 {
 				logger.Error("invalid actor key", zap.String("key", key))
@@ -105,6 +119,8 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			logger.Debug("context done, gracefully stopping death monitor")
+			m.Stop()
 			return
 		case <-ticker.C:
 			// Safety check to ensure we are resilient to missing KV updates
@@ -174,7 +190,21 @@ func (m *ActorDeathMonitor) onActorAlive(ctx context.Context, actorKey string) {
 		monitor.Stop()
 	}
 
-	delete(m.deadActors, actorKey)
 	delete(m.mailboxMonitors, actorKey)
+	delete(m.deadActors, actorKey)
 	logger.Info("actor resurrected", zap.String("actor", actorKey))
+}
+
+func (m *ActorDeathMonitor) Stop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Stop all mailbox monitors
+	for _, monitor := range m.mailboxMonitors {
+		monitor.Stop()
+	}
+
+	// Clear all maps
+	m.mailboxMonitors = make(map[string]*ActorMailboxMonitor)
+	m.deadActors = make(map[string]struct{})
 }
