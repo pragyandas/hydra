@@ -160,7 +160,7 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurre
 			newTask := utils.NewTask(fmt.Sprintf("%s.%s", req.Type, req.ID),
 				func() {
 					if _, err := system.CreateActor(req.Type, req.ID); err != nil {
-						logger.Error("failed to create actor",
+						logger.Warn("failed to create actor",
 							zap.String("type", req.Type),
 							zap.String("id", req.ID),
 							zap.Error(err))
@@ -214,7 +214,7 @@ func (system *ActorSystem) CreateActor(actorType string, id string) (*actor.Acto
 			return nil, fmt.Errorf("actor %s creation in progress", key)
 		}
 		if systemActor.actor != nil {
-			return systemActor.actor, nil
+			return nil, fmt.Errorf("actor %s already exists", key)
 		}
 	}
 
