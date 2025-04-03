@@ -3,6 +3,7 @@ package actorsystem
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/pragyandas/hydra/actor"
 	"github.com/pragyandas/hydra/common/utils"
@@ -112,10 +113,12 @@ func (system *ActorSystem) Close(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "actorsystem-close")
 	if system.ctxCancel != nil {
 		system.ctxCancel()
+		logger.Info("actor system context cancelled")
 	}
 
 	if system.cp != nil {
 		system.cp.Stop()
+		logger.Info("gracefully closed control plane")
 	}
 
 	if system.actors != nil {
@@ -131,6 +134,7 @@ func (system *ActorSystem) Close(ctx context.Context) {
 
 	if system.connection != nil {
 		system.connection.Close(ctx)
+		logger.Info("gracefully closed connection")
 	}
 
 	if system.telemetryShutdown != nil {
@@ -138,6 +142,7 @@ func (system *ActorSystem) Close(ctx context.Context) {
 		if err != nil {
 			logger.Error("failed to shutdown OTel SDK", zap.Error(err))
 		}
+		logger.Info("gracefully closed OTel SDK")
 	}
 }
 
@@ -145,12 +150,16 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurre
 	logger := telemetry.GetLogger(ctx, "actorsystem-handle-actor-resurrection")
 
 	resurrectionQueue := utils.NewTaskQueue(concurrency)
-	go resurrectionQueue.Run(ctx)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go resurrectionQueue.Run(ctx, &wg)
 
 	for {
 		select {
 		case <-ctx.Done():
 			close(system.actorResurrectionChan)
+			wg.Wait()
+			logger.Info("actor resurrection queue closed")
 			return
 		case req, ok := <-system.actorResurrectionChan:
 			if !ok {
