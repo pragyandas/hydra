@@ -13,15 +13,16 @@ import (
 
 func TestActorSystemRestartActorResurrection(t *testing.T) {
 	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	system, close := utils.SetupTestActorsystem(t)
+	defer cancel()
+
+	conn := utils.SetupTestConnection(t)
+	defer conn.Close()
+
+	system := utils.SetupTestActorsystem(t, "test-system", conn)
 	if err := system.Start(testContext); err != nil {
 		t.Fatalf("Failed to start actor system: %v", err)
 	}
-	defer func() {
-		system.Close(testContext)
-		close()
-		cancel()
-	}()
+	defer system.Close(testContext)
 
 	const (
 		numMessages            = 100

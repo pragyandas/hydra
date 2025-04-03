@@ -8,22 +8,28 @@ import (
 	"time"
 
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/actor/serializer"
 	"github.com/pragyandas/hydra/test/e2e/utils"
 )
 
-func TestActorCommunication(t *testing.T) {
-	numActors := 20
+type ActorTestState struct {
+	Count int
+}
+
+func TestActorStateMutation(t *testing.T) {
+	numActors := 10
 
 	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	system, close := utils.SetupTestActorsystem(t)
+	defer cancel()
+
+	conn := utils.SetupTestConnection(t)
+	defer conn.Close()
+
+	system := utils.SetupTestActorsystem(t, "test-system", conn)
 	if err := system.Start(testContext); err != nil {
 		t.Fatalf("Failed to start actor system: %v", err)
 	}
-	defer func() {
-		system.Close(testContext)
-		close()
-		cancel()
-	}()
+	defer system.Close(testContext)
 
 	testDuration := *utils.TestDurationFlag
 	var receivedCount atomic.Int32
@@ -34,6 +40,18 @@ func TestActorCommunication(t *testing.T) {
 
 	pingHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
+			actorState, err := self.GetState(testContext)
+			if err != nil {
+				t.Errorf("failed to get actor state: %v", err)
+			}
+			var state ActorTestState
+			if actorState == nil {
+				state = ActorTestState{Count: 0}
+			} else {
+				state = actorState.(ActorTestState)
+				state.Count++
+			}
+			self.SetState(testContext, state)
 			receivedCount.Add(1)
 			if time.Now().Before(endTime) {
 				return self.SendMessage("pong", self.ID(), msg)
@@ -44,6 +62,18 @@ func TestActorCommunication(t *testing.T) {
 
 	pongHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
+			actorState, err := self.GetState(testContext)
+			if err != nil {
+				t.Errorf("failed to get actor state: %v", err)
+			}
+			var state ActorTestState
+			if actorState == nil {
+				state = ActorTestState{Count: 0}
+			} else {
+				state = actorState.(ActorTestState)
+				state.Count++
+			}
+			self.SetState(testContext, state)
 			cycleCount.Add(1)
 			receivedCount.Add(1)
 			if time.Now().Before(endTime) {
@@ -55,12 +85,14 @@ func TestActorCommunication(t *testing.T) {
 
 	system.RegisterActorType("ping", actor.ActorTypeConfig{
 		MessageHandlerFactory: pingHandler,
+		StateSerializer:       serializer.NewJSONSerializer(ActorTestState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},
 	})
 	system.RegisterActorType("pong", actor.ActorTypeConfig{
 		MessageHandlerFactory: pongHandler,
+		StateSerializer:       serializer.NewJSONSerializer(ActorTestState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},

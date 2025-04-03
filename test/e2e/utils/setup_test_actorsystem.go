@@ -5,44 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats-server/v2/server"
-	natsd "github.com/nats-io/nats-server/v2/test"
-	"github.com/nats-io/nats.go"
 	"github.com/pragyandas/hydra/actorsystem"
 )
 
 var TestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
 
-func SetupTestActorsystem(t *testing.T) (*actorsystem.ActorSystem, func()) {
-	opts := &server.Options{
-		Port:      -1,
-		Host:      "127.0.0.1",
-		JetStream: true,
-		StoreDir:  t.TempDir(),
-	}
-	ns := natsd.RunServer(opts)
-	if ns == nil {
-		t.Fatal("Failed to create NATS test server")
-	}
-
-	if !ns.ReadyForConnections(4 * time.Second) {
-		t.Fatal("NATS server failed to start")
-	}
-
-	nc, err := nats.Connect(ns.ClientURL())
-	if err != nil {
-		t.Fatalf("Failed to connect to NATS: %v", err)
-	}
-
-	js, err := nc.JetStream()
-	if err != nil {
-		t.Fatalf("Failed to create JetStream context: %v", err)
-	}
-
+func SetupTestActorsystem(t *testing.T, id string, conn *TestConnection) *actorsystem.ActorSystem {
 	defaultConfig := actorsystem.DefaultConfig()
 	config := &actorsystem.Config{
-		ID:                    "test-system",
-		NatsURL:               ns.ClientURL(),
+		ID:                    id,
+		NatsURL:               conn.Server.ClientURL(),
 		MessageStreamConfig:   defaultConfig.MessageStreamConfig,
 		KVConfig:              defaultConfig.KVConfig,
 		ActorLivenessKVConfig: defaultConfig.ActorLivenessKVConfig,
@@ -52,29 +24,10 @@ func SetupTestActorsystem(t *testing.T) (*actorsystem.ActorSystem, func()) {
 		ControlPlaneConfig:    defaultConfig.ControlPlaneConfig,
 	}
 
-	kvs := []string{
-		config.KVConfig.Bucket,
-		config.ActorLivenessKVConfig.Bucket,
-		config.ControlPlaneConfig.MembershipConfig.KVConfig.Bucket,
-		config.ControlPlaneConfig.BucketManagerConfig.KVConfig.Bucket,
-	}
-	for _, kv := range kvs {
-		js.DeleteKeyValue(kv)
-	}
-
-	for _, stream := range []string{config.MessageStreamConfig.Name} {
-		js.DeleteStream(stream)
-	}
-
 	system, err := actorsystem.NewActorSystem(config)
 	if err != nil {
 		t.Fatalf("Failed to create actor system: %v", err)
 	}
 
-	close := func() {
-		nc.Close()
-		ns.Shutdown()
-	}
-
-	return system, close
+	return system
 }
