@@ -82,6 +82,12 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 }
 
 func (bm *BucketManager) Stop() {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+
+	for _, monitor := range bm.bucketMonitors {
+		monitor.Stop()
+	}
 	if bm.discoveryTicker != nil {
 		bm.discoveryTicker.Stop()
 	}

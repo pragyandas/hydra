@@ -3,6 +3,7 @@ package actorsystemtest
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,11 +12,13 @@ import (
 	"github.com/pragyandas/hydra/test/e2e/utils"
 )
 
-type ActorState struct {
+type ActorTestState struct {
 	Count int
 }
 
-func TestActorStateUpdate(t *testing.T) {
+func TestActorStateMutation(t *testing.T) {
+	numActors := 10
+
 	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	system, close := utils.SetupTestActorsystem(t)
 	if err := system.Start(testContext); err != nil {
@@ -28,6 +31,8 @@ func TestActorStateUpdate(t *testing.T) {
 	}()
 
 	testDuration := *utils.TestDurationFlag
+	var receivedCount atomic.Int32
+	var cycleCount atomic.Int32
 
 	startTime := time.Now()
 	endTime := startTime.Add(testDuration)
@@ -38,16 +43,17 @@ func TestActorStateUpdate(t *testing.T) {
 			if err != nil {
 				t.Errorf("failed to get actor state: %v", err)
 			}
-			var state ActorState
+			var state ActorTestState
 			if actorState == nil {
-				state = ActorState{Count: 0}
+				state = ActorTestState{Count: 0}
 			} else {
-				state = actorState.(ActorState)
+				state = actorState.(ActorTestState)
 				state.Count++
 			}
 			self.SetState(testContext, state)
+			receivedCount.Add(1)
 			if time.Now().Before(endTime) {
-				return self.SendMessage("pong", "1", msg)
+				return self.SendMessage("pong", self.ID(), msg)
 			}
 			return nil
 		}
@@ -59,16 +65,18 @@ func TestActorStateUpdate(t *testing.T) {
 			if err != nil {
 				t.Errorf("failed to get actor state: %v", err)
 			}
-			var state ActorState
+			var state ActorTestState
 			if actorState == nil {
-				state = ActorState{Count: 0}
+				state = ActorTestState{Count: 0}
 			} else {
-				state = actorState.(ActorState)
+				state = actorState.(ActorTestState)
 				state.Count++
 			}
 			self.SetState(testContext, state)
+			cycleCount.Add(1)
+			receivedCount.Add(1)
 			if time.Now().Before(endTime) {
-				return self.SendMessage("ping", "1", msg)
+				return self.SendMessage("ping", self.ID(), msg)
 			}
 			return nil
 		}
@@ -76,50 +84,55 @@ func TestActorStateUpdate(t *testing.T) {
 
 	system.RegisterActorType("ping", actor.ActorTypeConfig{
 		MessageHandlerFactory: pingHandler,
-		StateSerializer:       serializer.NewJSONSerializer(ActorState{}),
+		StateSerializer:       serializer.NewJSONSerializer(ActorTestState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},
 	})
 	system.RegisterActorType("pong", actor.ActorTypeConfig{
 		MessageHandlerFactory: pongHandler,
-		StateSerializer:       serializer.NewJSONSerializer(ActorState{}),
+		StateSerializer:       serializer.NewJSONSerializer(ActorTestState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},
 	})
 
-	pingActor, err := system.CreateActor("ping", "1")
-	if err != nil {
-		t.Fatalf("Failed to create ping actor: %v", err)
-	}
+	var pingActors []*actor.Actor
 
-	pongActor, err := system.CreateActor("pong", "1")
-	if err != nil {
-		t.Fatalf("Failed to create pong actor: %v", err)
+	for i := 0; i < numActors; i++ {
+		pingActor, err := system.CreateActor("ping", fmt.Sprintf("%d", i))
+		if err != nil {
+			t.Fatalf("Failed to create ping actor %d: %v", i, err)
+		}
+		pingActors = append(pingActors, pingActor)
+
+		_, err = system.CreateActor("pong", fmt.Sprintf("%d", i))
+		if err != nil {
+			t.Fatalf("Failed to create pong actor %d: %v", i, err)
+		}
 	}
 
 	// Send initial messages to start the ping-pong
-	msg := []byte(fmt.Sprintf("ping-%d", time.Now().UnixNano()))
-	if err := pingActor.SendMessage("pong", pongActor.ID(), msg); err != nil {
-		t.Errorf("Failed to send message from ping, err: %v", err)
+	for i := 0; i < numActors; i++ {
+		go func(i int) {
+			pongActor := pingActors[i].ID()
+			msg := []byte(fmt.Sprintf("ping-%d-%d", i, time.Now().UnixNano()))
+			if err := pingActors[i].SendMessage("pong", pongActor, msg); err != nil {
+				t.Errorf("Failed to send message from ping-%d to %s: %v", i, pongActor, err)
+			}
+		}(i)
 	}
 
-	// Wait for test duration
 	time.Sleep(testDuration)
 
 	duration := time.Since(startTime)
+	count := receivedCount.Load()
+	cycles := cycleCount.Load()
 
-	finalPingState, err := pingActor.GetState(testContext)
-	if err != nil {
-		t.Errorf("failed to get ping actor state: %v", err)
-	}
-	finalPongState, err := pongActor.GetState(testContext)
-	if err != nil {
-		t.Errorf("failed to get pong actor state: %v", err)
-	}
+	messagesPerSecond := float64(count) / duration.Seconds()
 
 	t.Logf("Test completed in %v", duration)
-	t.Logf("Ping state: %+v", finalPingState)
-	t.Logf("Pong state: %+v", finalPongState)
+	t.Logf("Total messages: %d", count)
+	t.Logf("Total cycles: %d", cycles)
+	t.Logf("Throughput: %.2f messages/second", messagesPerSecond)
 }

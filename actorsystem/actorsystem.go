@@ -114,6 +114,10 @@ func (system *ActorSystem) Close(ctx context.Context) {
 		system.ctxCancel()
 	}
 
+	if system.cp != nil {
+		system.cp.Stop()
+	}
+
 	if system.actors != nil {
 		for _, status := range system.actors {
 			if status.actor != nil {
@@ -123,10 +127,6 @@ func (system *ActorSystem) Close(ctx context.Context) {
 		// Reset the actors map
 		system.actors = make(map[string]*systemActor)
 		logger.Info("gracefully closed all actors")
-	}
-
-	if system.cp != nil {
-		system.cp.Stop()
 	}
 
 	if system.connection != nil {
