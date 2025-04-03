@@ -54,15 +54,21 @@ func (t *TaskQueue) Add(ctx context.Context, task Task) {
 	t.tasks = append(t.tasks, task)
 }
 
-func (t *TaskQueue) Run(ctx context.Context) {
+func (t *TaskQueue) Run(ctx context.Context, wg *sync.WaitGroup) {
 	logger := telemetry.GetLogger(ctx, "taskqueue-run")
+
 	for {
-		if len(t.tasks) == 0 {
-			continue
-		}
 		select {
+		case <-ctx.Done():
+			wg.Done()
+			return
 		case t.semaphore <- struct{}{}:
 			t.taskMux.Lock()
+			if len(t.tasks) == 0 {
+				<-t.semaphore
+				t.taskMux.Unlock()
+				continue
+			}
 
 			// Get the task out
 			task := t.tasks[0]
@@ -77,8 +83,6 @@ func (t *TaskQueue) Run(ctx context.Context) {
 				<-t.semaphore
 				logger.Debug("task completed", zap.String("key", task.key))
 			}()
-		case <-ctx.Done():
-			return
 		}
 	}
 }
