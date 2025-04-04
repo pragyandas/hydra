@@ -111,13 +111,14 @@ func (system *ActorSystem) Start(ctx context.Context) error {
 
 func (system *ActorSystem) Close(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "actorsystem-close")
+
 	if system.ctxCancel != nil {
 		system.ctxCancel()
 		logger.Info("actor system context cancelled")
 	}
 
 	if system.cp != nil {
-		system.cp.Stop()
+		system.cp.Stop(ctx)
 		logger.Info("gracefully closed control plane")
 	}
 
