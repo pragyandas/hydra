@@ -41,6 +41,7 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 		case <-m.done:
 			return
 		case <-ctx.Done():
+			m.Stop()
 			return
 		case <-ticker.C:
 			consumer, err := m.connection.JS.Consumer(ctx, m.connection.StreamName, consumerName)

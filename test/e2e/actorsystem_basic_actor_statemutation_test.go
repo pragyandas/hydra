@@ -42,7 +42,7 @@ func TestActorStateMutation(t *testing.T) {
 		return func(msg []byte) error {
 			actorState, err := self.GetState(testContext)
 			if err != nil {
-				t.Errorf("failed to get actor state: %v", err)
+				return fmt.Errorf("failed to get actor state: %w", err)
 			}
 			var state ActorTestState
 			if actorState == nil {
@@ -51,7 +51,9 @@ func TestActorStateMutation(t *testing.T) {
 				state = actorState.(ActorTestState)
 				state.Count++
 			}
-			self.SetState(testContext, state)
+			if err := self.SetState(testContext, state); err != nil {
+				return fmt.Errorf("failed to set actor state: %w", err)
+			}
 			receivedCount.Add(1)
 			if time.Now().Before(endTime) {
 				return self.SendMessage("pong", self.ID(), msg)
@@ -64,7 +66,7 @@ func TestActorStateMutation(t *testing.T) {
 		return func(msg []byte) error {
 			actorState, err := self.GetState(testContext)
 			if err != nil {
-				t.Errorf("failed to get actor state: %v", err)
+				return fmt.Errorf("failed to get actor state: %w", err)
 			}
 			var state ActorTestState
 			if actorState == nil {
@@ -73,7 +75,9 @@ func TestActorStateMutation(t *testing.T) {
 				state = actorState.(ActorTestState)
 				state.Count++
 			}
-			self.SetState(testContext, state)
+			if err := self.SetState(testContext, state); err != nil {
+				return fmt.Errorf("failed to set actor state: %w", err)
+			}
 			cycleCount.Add(1)
 			receivedCount.Add(1)
 			if time.Now().Before(endTime) {

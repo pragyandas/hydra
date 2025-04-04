@@ -27,10 +27,7 @@ type BucketManager struct {
 	kv                    jetstream.KeyValue
 	connection            *connection.Connection
 	mu                    sync.RWMutex
-	wg                    sync.WaitGroup
-	done                  chan struct{}
 	interestSub           *nats.Subscription
-	discoveryTicker       *time.Ticker
 	claimMu               sync.Mutex
 	actorResurrectionChan chan actor.ActorId
 }
@@ -42,7 +39,6 @@ func NewBucketManager(connection *connection.Connection, membership *Membership,
 		bucketMonitors:        make(map[int]*actormonitor.ActorDeathMonitor),
 		connection:            connection,
 		actorResurrectionChan: actorResurrectionChan,
-		done:                  make(chan struct{}),
 	}
 }
 
@@ -70,32 +66,29 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 	}
 
 	// Start periodic bucket safety check
-	bm.wg.Add(1)
-	go func() {
-		defer bm.wg.Done()
-		bm.bucketDiscoveryLoop(ctx, config.SafetyCheckInterval)
-	}()
+	go bm.bucketDiscoveryLoop(ctx, config.SafetyCheckInterval)
 
 	logger.Info("started bucket manager")
 
 	return nil
 }
 
-func (bm *BucketManager) Stop() {
+func (bm *BucketManager) Stop(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-stop")
+
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
 	for _, monitor := range bm.bucketMonitors {
 		monitor.Stop()
 	}
-	if bm.discoveryTicker != nil {
-		bm.discoveryTicker.Stop()
-	}
+
 	if bm.interestSub != nil {
 		bm.interestSub.Unsubscribe()
+		logger.Info("unsubscribed from bucket interest")
 	}
-	close(bm.done)
-	bm.wg.Wait()
+
+	logger.Info("stopped bucket manager")
 }
 
 func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) error {
@@ -118,14 +111,15 @@ func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) er
 }
 
 func (bm *BucketManager) bucketDiscoveryLoop(ctx context.Context, interval time.Duration) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-bucketDiscoveryLoop")
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-bm.done:
-			return
 		case <-ctx.Done():
+			logger.Info("bucket discovery loop cancelled")
 			return
 		case <-ticker.C:
 			bm.RecalculateBuckets(ctx)

@@ -76,16 +76,20 @@ func (cp *ControlPlane) handlemembershipUpdate(ctx context.Context) {
 	}
 }
 
-func (cp *ControlPlane) Stop() error {
+func (cp *ControlPlane) Stop(ctx context.Context) error {
+	logger := telemetry.GetLogger(ctx, "controlplane-stop")
+
 	close(cp.done)
 	cp.wg.Wait()
 
 	if cp.membership != nil {
-		cp.membership.Stop()
+		cp.membership.Stop(ctx)
+		logger.Info("gracefully closed control plane membership")
 	}
 
 	if cp.bucketManager != nil {
-		cp.bucketManager.Stop()
+		cp.bucketManager.Stop(ctx)
+		logger.Info("gracefully closed control plane bucket manager")
 	}
 
 	return nil

@@ -24,8 +24,6 @@ type Membership struct {
 	membersChan       chan map[string]*MemberInfo
 	mu                sync.RWMutex
 	membershipChanged chan struct{}
-	wg                sync.WaitGroup
-	done              chan struct{}
 	selfIndex         int
 }
 
@@ -35,7 +33,6 @@ func NewMembership(connection *connection.Connection, membershipChanged chan str
 		membershipChanged: membershipChanged,
 		members:           make(map[string]*MemberInfo),
 		membersChan:       make(chan map[string]*MemberInfo, 1),
-		done:              make(chan struct{}),
 	}
 }
 
@@ -65,14 +62,14 @@ func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
 
 	m.updateMemberPosition()
 
-	logger.Info("started membership")
+	logger.Info("started control plane membership watcher")
 
 	return nil
 }
 
-func (m *Membership) Stop() {
-	close(m.done)
-	m.wg.Wait()
+func (m *Membership) Stop(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "membership-stop")
+	logger.Info("stopped control plane membership watcher")
 }
 
 func (m *Membership) initializeKV(ctx context.Context, config MembershipConfig) error {
@@ -143,36 +140,31 @@ func (m *Membership) register(ctx context.Context) error {
 }
 
 func (m *Membership) startBackgroundTasks(ctx context.Context, heartbeatInterval time.Duration) {
+	logger := telemetry.GetLogger(ctx, "membership-startBackgroundTasks")
 	// Start the membership watcher
-	m.wg.Add(1)
 	go func() {
-		defer m.wg.Done()
 		if err := m.watchMembers(ctx); err != nil && err != context.Canceled {
-			log.Printf("failed to watch members: %v", err)
+			logger.Error("failed to watch members", zap.Error(err))
 		}
 	}()
 
 	// Start the heartbeat loop
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.heartbeatLoop(ctx, heartbeatInterval)
-	}()
+	go m.heartbeatLoop(ctx, heartbeatInterval)
 }
 
 func (m *Membership) heartbeatLoop(ctx context.Context, heartbeatInterval time.Duration) {
+	logger := telemetry.GetLogger(ctx, "membership-heartbeatLoop")
+
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-m.done:
-			return
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := m.heartbeat(ctx); err != nil {
-				log.Printf("failed to heartbeat: %v", err)
+				logger.Error("failed to heartbeat", zap.Error(err))
 			}
 		}
 	}
@@ -241,8 +233,6 @@ func (m *Membership) watchMembers(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-m.done:
-			return nil
 		case entry := <-watcher.Updates():
 			if entry == nil {
 				continue
