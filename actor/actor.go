@@ -111,6 +111,8 @@ func (a *Actor) Close() {
 		a.cancel()
 	}
 
+	close(a.msgCh)
+
 	if a.closeCallback != nil {
 		a.closeCallback()
 	}
