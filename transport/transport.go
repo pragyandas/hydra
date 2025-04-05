@@ -127,12 +127,17 @@ func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, revis
 	logger := telemetry.GetLogger(ctx, "transport-maintain-liveness")
 
 	ticker := time.NewTicker(heartbeatInterval)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			// stopping the ticker here instead of in the defer
+			// as ctx done doesn't cause an exit immediately
+			ticker.Stop()
+
 			logger.Debug("context done, stopping liveness maintenance", zap.String("key", key))
+
+			// delete the liveness entry
 			deleteCtx, deleteCtxCancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer deleteCtxCancel()
 
