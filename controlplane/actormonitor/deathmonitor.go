@@ -36,11 +36,9 @@ func NewActorDeathMonitor(connection *connection.Connection, bucketID int, actor
 
 func (m *ActorDeathMonitor) Start(ctx context.Context) error {
 	// Discover all dead actors for the bucket
-	m.mu.Lock()
 	if err := m.findDeadActors(ctx); err != nil {
 		return err
 	}
-	m.mu.Unlock()
 
 	go m.monitorDeadActors(ctx)
 	return nil
@@ -92,7 +90,9 @@ func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 			actorType := parts[2]
 			actorId := parts[3]
 			actorKey := fmt.Sprintf("%s.%s", actorType, actorId)
+			m.mu.Lock()
 			m.onActorDeath(ctx, actorKey)
+			m.mu.Unlock()
 		}
 	}
 
@@ -120,7 +120,6 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			logger.Debug("context done, gracefully stopping death monitor")
-			m.Stop()
 			return
 		case <-ticker.C:
 			// Safety check to ensure we are resilient to missing KV updates
@@ -147,11 +146,9 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 			switch entry.Operation() {
 			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
 				m.onActorDeath(ctx, actorKey)
-				logger.Info("actor marked as dead", zap.String("actor", actorKey))
 			case jetstream.KeyValuePut:
 				if _, exists := m.deadActors[actorKey]; exists {
 					m.onActorAlive(ctx, actorKey)
-					logger.Info("actor marked as alive", zap.String("actor", actorKey))
 				}
 			}
 			m.mu.Unlock()
@@ -173,12 +170,11 @@ func (m *ActorDeathMonitor) onActorDeath(ctx context.Context, actorKey string) {
 		monitor := NewActorMailboxMonitor(m.connection, actorType, actorID)
 		m.mailboxMonitors[actorKey] = monitor
 
-		logger.Info("starting mailbox monitor", zap.String("actor", actorKey))
+		logger.Debug("starting mailbox monitor", zap.String("actor", actorKey))
 
 		go monitor.Start(ctx, func() {
-			// Callback function to request actor resurrection
 			m.actorResurrectionChan <- actor.ActorId{Type: actorType, ID: actorID}
-			logger.Info("actor resurrection requested", zap.String("actor", actorKey))
+			logger.Debug("actor resurrection requested", zap.String("actor", actorKey))
 		})
 	}
 }
@@ -186,25 +182,11 @@ func (m *ActorDeathMonitor) onActorDeath(ctx context.Context, actorKey string) {
 func (m *ActorDeathMonitor) onActorAlive(ctx context.Context, actorKey string) {
 	logger := telemetry.GetLogger(ctx, "death-monitor-on-actor-alive")
 
-	if monitor, exists := m.mailboxMonitors[actorKey]; exists {
-		monitor.Stop()
+	if mailboxMonitorForActor, exists := m.mailboxMonitors[actorKey]; exists {
+		mailboxMonitorForActor.Stop()
+		delete(m.mailboxMonitors, actorKey)
 	}
 
-	delete(m.mailboxMonitors, actorKey)
 	delete(m.deadActors, actorKey)
-	logger.Info("actor resurrected", zap.String("actor", actorKey))
-}
-
-func (m *ActorDeathMonitor) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Stop all mailbox monitors
-	for _, monitor := range m.mailboxMonitors {
-		monitor.Stop()
-	}
-
-	// Clear all maps
-	m.mailboxMonitors = make(map[string]*ActorMailboxMonitor)
-	m.deadActors = make(map[string]struct{})
+	logger.Debug("actor resurrected", zap.String("actor", actorKey))
 }
