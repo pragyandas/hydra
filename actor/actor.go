@@ -3,23 +3,25 @@ package actor
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/pragyandas/hydra/telemetry"
 	"go.uber.org/zap"
 )
 
 type Actor struct {
-	id            string
-	actorType     string
-	config        Config
-	handler       MessageHandler
-	msgCh         chan Message
-	transport     ActorTransport
-	closeCallback func()
-	stateManager  ActorStateManager
-	state         any
-	errorHandler  ErrorHandler
-	cancel        context.CancelFunc
+	id                  string
+	actorType           string
+	config              Config
+	handler             MessageHandler
+	msgCh               chan Message
+	transport           ActorTransport
+	closeCallback       func()
+	stateManager        ActorStateManager
+	state               any
+	errorHandler        ErrorHandler
+	cancel              context.CancelFunc
+	messageProcessingWg sync.WaitGroup
 }
 
 func (a *Actor) WithMessageHandler(handler MessageHandler) *Actor {
@@ -66,9 +68,10 @@ func NewActor(
 	}
 
 	actor := &Actor{
-		id:        id,
-		actorType: actorType,
-		msgCh:     make(chan Message),
+		id:                  id,
+		actorType:           actorType,
+		msgCh:               make(chan Message),
+		messageProcessingWg: sync.WaitGroup{},
 	}
 
 	// Apply options
@@ -101,7 +104,7 @@ func (a *Actor) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start transport for actor %s: %w", a.id, err)
 	}
 
-	logger.Info("started actor", zap.String("id", a.id), zap.String("actorType", a.actorType))
+	logger.Debug("started actor", zap.String("id", a.id), zap.String("actorType", a.actorType))
 
 	return nil
 }
@@ -111,7 +114,8 @@ func (a *Actor) Close() {
 		a.cancel()
 	}
 
-	close(a.msgCh)
+	// wait for the message processing to finish
+	a.messageProcessingWg.Wait()
 
 	if a.closeCallback != nil {
 		a.closeCallback()
@@ -120,23 +124,29 @@ func (a *Actor) Close() {
 
 func (a *Actor) processMessages(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "actor-process-messages")
-
 	for {
 		select {
 		case <-ctx.Done():
+			logger.Debug("context done, stopping message processing", zap.String("actor", a.id))
 			return
 		case msg := <-a.msgCh:
-			if err := a.handler(msg.Data()); err != nil {
-				if a.errorHandler != nil {
-					// It's the responsibility of the error handler to ack or nak the message
-					a.errorHandler(err, msg)
-				} else {
-					logger.Error("Actor failed to process message", zap.Error(err))
-					msg.Nak()
+			a.messageProcessingWg.Add(1)
+			go func() {
+				defer a.messageProcessingWg.Done()
+				err := a.handler(msg.Data())
+				if err != nil {
+					if a.errorHandler != nil {
+						// It's the responsibility of the error handler to ack or nak the message
+						a.errorHandler(err, msg)
+					} else {
+						logger.Error("Actor failed to process message", zap.Error(err))
+						msg.Nak()
+					}
+					return
 				}
-				continue
-			}
-			msg.Ack()
+
+				msg.Ack()
+			}()
 		}
 	}
 }
