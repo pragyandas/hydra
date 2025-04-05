@@ -97,7 +97,7 @@ func (c *Connection) IsKeyNotFound(err error) bool {
 
 func (c *Connection) Close(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "connection-close")
-	logger.Info("closing connection")
+	logger.Debug("closing connection")
 
 	c.NC.Close()
 }

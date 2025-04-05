@@ -68,7 +68,7 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 	// Start periodic bucket safety check
 	go bm.bucketDiscoveryLoop(ctx, config.SafetyCheckInterval)
 
-	logger.Info("started bucket manager")
+	logger.Debug("started bucket manager")
 
 	return nil
 }
@@ -76,28 +76,21 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 func (bm *BucketManager) Stop(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-stop")
 
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
-	for _, monitor := range bm.bucketMonitors {
-		monitor.Stop()
-	}
-
 	if bm.interestSub != nil {
 		bm.interestSub.Unsubscribe()
-		logger.Info("unsubscribed from bucket interest")
 	}
 
-	logger.Info("stopped bucket manager")
+	logger.Debug("stopped control plane bucket manager")
 }
 
 func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) error {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-setupBucketInterestSubscription")
 	region, systemID := common.GetRegion(), common.GetSystemID()
 
 	sub, err := bm.connection.NC.Subscribe(fmt.Sprintf("bucketinterest.%s.%s", region, systemID), func(msg *nats.Msg) {
 		var interest BucketInterest
 		if err := json.Unmarshal(msg.Data, &interest); err != nil {
-			log.Printf("failed to unmarshal bucket interest: %v", err)
+			logger.Error("failed to unmarshal bucket interest", zap.Error(err))
 			return
 		}
 		bm.handleInterest(ctx, &interest)
@@ -119,7 +112,7 @@ func (bm *BucketManager) bucketDiscoveryLoop(ctx context.Context, interval time.
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("bucket discovery loop cancelled")
+			logger.Debug("bucket discovery loop cancelled")
 			return
 		case <-ticker.C:
 			bm.RecalculateBuckets(ctx)
@@ -128,17 +121,19 @@ func (bm *BucketManager) bucketDiscoveryLoop(ctx context.Context, interval time.
 }
 
 func (bm *BucketManager) RecalculateBuckets(ctx context.Context) {
-	eligibleBuckets := bm.getEligibleBuckets()
+	eligibleBuckets := bm.getEligibleBuckets(ctx)
 
 	if len(eligibleBuckets) > 0 {
 		bm.tryClaimBuckets(ctx, eligibleBuckets)
 	}
 }
 
-func (bm *BucketManager) getEligibleBuckets() []int {
+func (bm *BucketManager) getEligibleBuckets(ctx context.Context) []int {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-getEligibleBuckets")
+
 	memberCount, selfIndex := bm.membership.GetMemberCountAndPosition()
 	if selfIndex == -1 {
-		log.Printf("warning: couldn't find self in member list")
+		logger.Warn("couldn't find self in member list")
 		return nil
 	}
 
@@ -166,6 +161,7 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(buckets))
+	// TODO: Use task queue here
 	// Tweak claim concurrency by changing the number of semaphore tokens
 	semaphore := make(chan struct{}, 10)
 

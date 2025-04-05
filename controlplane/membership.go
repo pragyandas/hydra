@@ -67,11 +67,6 @@ func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
 	return nil
 }
 
-func (m *Membership) Stop(ctx context.Context) {
-	logger := telemetry.GetLogger(ctx, "membership-stop")
-	logger.Info("stopped control plane membership watcher")
-}
-
 func (m *Membership) initializeKV(ctx context.Context, config MembershipConfig) error {
 	kv, err := m.connection.JS.CreateKeyValue(ctx, config.KVConfig)
 	if err != nil {

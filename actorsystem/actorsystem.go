@@ -114,12 +114,12 @@ func (system *ActorSystem) Close(ctx context.Context) {
 
 	if system.ctxCancel != nil {
 		system.ctxCancel()
-		logger.Info("actor system context cancelled")
+		logger.Debug("actor system context cancelled")
 	}
 
 	if system.cp != nil {
 		system.cp.Stop(ctx)
-		logger.Info("gracefully closed control plane")
+		logger.Debug("gracefully closed control plane")
 	}
 
 	if system.actors != nil {
@@ -130,12 +130,12 @@ func (system *ActorSystem) Close(ctx context.Context) {
 		}
 		// Reset the actors map
 		system.actors = make(map[string]*systemActor)
-		logger.Info("gracefully closed all actors")
+		logger.Debug("gracefully closed all actors")
 	}
 
 	if system.connection != nil {
 		system.connection.Close(ctx)
-		logger.Info("gracefully closed connection")
+		logger.Debug("gracefully closed connection")
 	}
 
 	if system.telemetryShutdown != nil {
@@ -143,8 +143,12 @@ func (system *ActorSystem) Close(ctx context.Context) {
 		if err != nil {
 			logger.Error("failed to shutdown OTel SDK", zap.Error(err))
 		}
-		logger.Info("gracefully closed OTel SDK")
+		logger.Debug("gracefully closed OTel SDK")
 	}
+
+	logger.Info("closed actor system",
+		zap.String("region", system.config.Region),
+		zap.String("id", system.config.ID))
 }
 
 func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurrency int) {
@@ -160,7 +164,7 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurre
 		case <-ctx.Done():
 			close(system.actorResurrectionChan)
 			wg.Wait()
-			logger.Info("actor resurrection queue closed")
+			logger.Debug("actor resurrection queue closed")
 			return
 		case req, ok := <-system.actorResurrectionChan:
 			if !ok {

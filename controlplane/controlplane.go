@@ -82,15 +82,14 @@ func (cp *ControlPlane) Stop(ctx context.Context) error {
 	close(cp.done)
 	cp.wg.Wait()
 
-	if cp.membership != nil {
-		cp.membership.Stop(ctx)
-		logger.Info("gracefully closed control plane membership")
-	}
+	// No need to stop membership
+	// It is automatically stopped when the context is cancelled
 
 	if cp.bucketManager != nil {
 		cp.bucketManager.Stop(ctx)
-		logger.Info("gracefully closed control plane bucket manager")
 	}
+
+	logger.Debug("closed control plane")
 
 	return nil
 }

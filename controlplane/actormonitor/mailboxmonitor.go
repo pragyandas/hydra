@@ -30,6 +30,11 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 	logger := telemetry.GetLogger(ctx, "mailbox-monitor")
 
 	consumerName := fmt.Sprintf("%s-%s", m.actorType, m.actorID)
+	consumer, err := m.connection.JS.Consumer(ctx, m.connection.StreamName, consumerName)
+	if err != nil {
+		logger.Error("failed to get consumer", zap.Error(err))
+		return
+	}
 
 	// JS does not support watching for pending messages, so we need to poll
 	// TODO: Make this interval configurable, though 1 sec is good enough
@@ -41,15 +46,8 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 		case <-m.done:
 			return
 		case <-ctx.Done():
-			m.Stop()
 			return
 		case <-ticker.C:
-			consumer, err := m.connection.JS.Consumer(ctx, m.connection.StreamName, consumerName)
-			if err != nil {
-				logger.Error("failed to get consumer", zap.Error(err))
-				continue
-			}
-
 			info, err := consumer.Info(ctx)
 			if err != nil {
 				logger.Error("failed to get consumer info", zap.Error(err))
@@ -57,11 +55,12 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 			}
 
 			if info.NumPending > 0 {
-				logger.Debug("dead actor has pending messages",
+				logger.Info("dead actor has pending messages",
 					zap.String("actor", fmt.Sprintf("%s/%s", m.actorType, m.actorID)),
 					zap.Uint64("pending", info.NumPending))
 
 				resurrectionHandler()
+				return
 			}
 		}
 	}
