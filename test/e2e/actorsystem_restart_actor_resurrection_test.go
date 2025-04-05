@@ -36,8 +36,8 @@ func TestActorSystemRestartActorResurrection(t *testing.T) {
 		MessageHandlerFactory: func(self *actor.Actor) actor.MessageHandler {
 			return func(msg []byte) error {
 				time.Sleep(processingTime)
+				t.Logf("processed message %s", string(msg))
 				processedCount.Add(1)
-				t.Logf("processed message %d", processedCount.Load())
 				return nil
 			}
 		},
