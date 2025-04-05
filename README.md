@@ -1,3 +1,5 @@
+![Build Status](https://github.com/pragyandas/hydra/actions/workflows/build.yml/badge.svg)
+
 # Hydra
 An actor framework for Go - built on NATS ⚡
 
