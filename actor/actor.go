@@ -21,6 +21,7 @@ type Actor struct {
 	state               any
 	errorHandler        ErrorHandler
 	cancel              context.CancelFunc
+	mu                  sync.RWMutex
 	messageProcessingWg sync.WaitGroup
 }
 
@@ -89,7 +90,7 @@ func (a *Actor) Start(ctx context.Context) error {
 	a.cancel = cancel
 
 	// Load state from kv
-	state, err := a.GetState(ctx)
+	state, err := a.stateManager.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load state for actor %s: %w", a.id, err)
 	}
@@ -131,12 +132,12 @@ func (a *Actor) processMessages(ctx context.Context) {
 			return
 		case msg := <-a.msgCh:
 			a.messageProcessingWg.Add(1)
-			go func() {
-				defer a.messageProcessingWg.Done()
+			go func(wg *sync.WaitGroup) {
+				defer wg.Done()
 				err := a.handler(msg.Data())
 				if err != nil {
 					if a.errorHandler != nil {
-						// It's the responsibility of the error handler to ack or nak the message
+						// error handler to ack or nak the message
 						a.errorHandler(err, msg)
 					} else {
 						logger.Error("Actor failed to process message", zap.Error(err))
@@ -146,7 +147,7 @@ func (a *Actor) processMessages(ctx context.Context) {
 				}
 
 				msg.Ack()
-			}()
+			}(&a.messageProcessingWg)
 		}
 	}
 }
@@ -171,11 +172,17 @@ func (a *Actor) SendMessage(actorType string, actorID string, message []byte) er
 	return nil
 }
 
-func (a *Actor) GetState(ctx context.Context) (any, error) {
-	return a.stateManager.Load(ctx)
+func (a *Actor) GetState(ctx context.Context) any {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	return a.state
 }
 
 func (a *Actor) SetState(ctx context.Context, state any) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	if err := a.stateManager.Save(ctx, state); err != nil {
 		return fmt.Errorf("failed to save state for actor %s: %w", a.id, err)
 	}
