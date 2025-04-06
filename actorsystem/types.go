@@ -38,7 +38,7 @@ func DefaultConfig() *Config {
 			HeartbeatsMissedThreshold: GetHeartbeatsMissedThreshold(),
 			ConsumerConfig: actor.ConsumerConfig{
 				MaxDeliver: -1,
-				AckWait:    100 * time.Millisecond,
+				AckWait:    1 * time.Second,
 			},
 		},
 		MessageStreamConfig: jetstream.StreamConfig{
