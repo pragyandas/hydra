@@ -17,7 +17,7 @@ type ActorTestState struct {
 }
 
 func TestActorStateMutation(t *testing.T) {
-	numActors := 50
+	numActors := 100
 
 	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -40,10 +40,7 @@ func TestActorStateMutation(t *testing.T) {
 
 	pingHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
-			actorState, err := self.GetState(testContext)
-			if err != nil {
-				return fmt.Errorf("failed to get actor state: %w", err)
-			}
+			actorState := self.GetState(testContext)
 			var state ActorTestState
 			if actorState == nil {
 				state = ActorTestState{Count: 0}
@@ -64,10 +61,7 @@ func TestActorStateMutation(t *testing.T) {
 
 	pongHandler := func(self *actor.Actor) actor.MessageHandler {
 		return func(msg []byte) error {
-			actorState, err := self.GetState(testContext)
-			if err != nil {
-				return fmt.Errorf("failed to get actor state: %w", err)
-			}
+			actorState := self.GetState(testContext)
 			var state ActorTestState
 			if actorState == nil {
 				state = ActorTestState{Count: 0}

@@ -12,6 +12,7 @@ var TestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration f
 
 func SetupTestActorsystem(t *testing.T, id string, conn *TestConnection) *actorsystem.ActorSystem {
 	defaultConfig := actorsystem.DefaultConfig()
+	defaultConfig.ActorConfig.ConsumerConfig.AckWait = 5 * time.Second
 	config := &actorsystem.Config{
 		ID:                    id,
 		NatsURL:               conn.Server.ClientURL(),
