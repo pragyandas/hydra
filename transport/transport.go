@@ -85,39 +85,86 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	return nil
 }
 
+func (t *ActorTransport) getConsumer(ctx context.Context, config ConsumerConfig) (jetstream.Consumer, error) {
+	logger := telemetry.GetLogger(ctx, "transport-get-consumer")
+
+	consumerName := fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID())
+	consumerConfig := jetstream.ConsumerConfig{
+		Durable:       consumerName,
+		FilterSubject: t.subject,
+		AckWait:       config.AckWait,              // Redlivery will be triggered after this time
+		MaxAckPending: 1,                           // Ensures strict ordering
+		AckPolicy:     jetstream.AckExplicitPolicy, // Won't move to next message until ack is received
+		MaxDeliver:    config.MaxDeliver,           // -1 means unlimited redelivery, depends on ack wait
+		DeliverPolicy: jetstream.DeliverAllPolicy,
+	}
+
+	existingConsumer, err := t.connection.JS.Consumer(ctx, t.connection.StreamName, consumerName)
+	if err != nil {
+		if err == jetstream.ErrConsumerNotFound {
+			// create new consumer
+			consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, consumerConfig)
+			if err != nil {
+				logger.Error("failed to create consumer", zap.Error(err))
+				return nil, fmt.Errorf("failed to create consumer: %w", err)
+			}
+
+			return consumer, nil
+		}
+		logger.Error("failed to get consumer", zap.Error(err))
+		return nil, fmt.Errorf("failed to get consumer: %w", err)
+	}
+
+	info, err := existingConsumer.Info(ctx)
+
+	if err != nil {
+		logger.Error("failed to get consumer info", zap.Error(err))
+		return nil, fmt.Errorf("failed to get consumer info: %w", err)
+	}
+
+	if info.Delivered.Stream > 0 {
+		// If consumer has pending messages, we need to start after the last delivered message
+		consumerConfig.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
+		consumerConfig.OptStartSeq = info.Delivered.Stream + 1 // Start after the last delivered message
+
+		err = t.connection.JS.DeleteConsumer(ctx, t.connection.StreamName, consumerName)
+		if err != nil {
+			logger.Error("failed to delete consumer", zap.Error(err))
+			return nil, fmt.Errorf("failed to delete consumer: %w", err)
+		}
+
+		consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, consumerConfig)
+		if err != nil {
+			logger.Error("failed to create consumer", zap.Error(err))
+			return nil, fmt.Errorf("failed to create consumer: %w", err)
+		}
+
+		return consumer, nil
+	}
+
+	return existingConsumer, nil
+}
+
 func (t *ActorTransport) setupConsumer(ctx context.Context, config ConsumerConfig) error {
 	logger := telemetry.GetLogger(ctx, "transport-setup-consumer")
 
-	consumer, err := t.connection.JS.CreateOrUpdateConsumer(ctx, t.connection.StreamName, jetstream.ConsumerConfig{
-		Durable:       fmt.Sprintf("%s-%s", t.actor.Type(), t.actor.ID()),
-		FilterSubject: t.subject,
-		MaxDeliver:    config.MaxDeliver, // -1 means unlimited redelivery
-		AckWait:       config.AckWait,    // Redlivery will be triggered after this time
-
-		// The below properties cannot be set by the user
-		// as this is what makes actor process messages
-		// in the order they are received and also
-		// ensures at-least-once delivery
-		MaxAckPending: 1,
-		DeliverPolicy: jetstream.DeliverNewPolicy,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-	})
+	consumer, err := t.getConsumer(ctx, config)
 	if err != nil {
-		logger.Error("failed to create consumer", zap.Error(err))
-		return fmt.Errorf("failed to create consumer: %w", err)
+		logger.Error("failed to get consumer", zap.Error(err))
+		return fmt.Errorf("failed to get consumer: %w", err)
 	}
 
 	_, err = consumer.Consume(func(msg jetstream.Msg) {
 		select {
-		case t.actor.MessageChannel() <- msg:
-			logger.Debug("message sent to actor", zap.String("subject", t.subject))
 		case <-ctx.Done():
 			logger.Debug("context done, stopping consumer", zap.String("subject", t.subject))
+		case t.actor.MessageChannel() <- msg:
+			logger.Debug("message sent to actor", zap.String("subject", t.subject))
 		}
-	}, jetstream.PullMaxMessages(1))
+	})
 	if err != nil {
 		logger.Error("failed to consume messages", zap.Error(err))
-		return fmt.Errorf("failed to create consumer: %w", err)
+		return fmt.Errorf("failed to consume messages: %w", err)
 	}
 
 	return nil
