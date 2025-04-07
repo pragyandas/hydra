@@ -12,7 +12,7 @@ import (
 )
 
 func TestActorCommunication(t *testing.T) {
-	numActors := 20
+	numActors := 100
 
 	testContext, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
