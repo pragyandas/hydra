@@ -122,10 +122,11 @@ func (t *ActorTransport) getConsumer(ctx context.Context, config ConsumerConfig)
 		return nil, fmt.Errorf("failed to get consumer info: %w", err)
 	}
 
-	if info.Delivered.Stream > 0 {
+	if info.AckFloor.Stream > 0 {
 		// If consumer has pending messages, we need to start after the last delivered message
 		consumerConfig.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
-		consumerConfig.OptStartSeq = info.Delivered.Stream + 1 // Start after the last delivered message
+		// Start after the last acknowledged message
+		consumerConfig.OptStartSeq = info.AckFloor.Stream + 1
 
 		err = t.connection.JS.DeleteConsumer(ctx, t.connection.StreamName, consumerName)
 		if err != nil {

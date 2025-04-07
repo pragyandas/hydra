@@ -36,7 +36,7 @@ func TestActorResurrection(t *testing.T) {
 		return func(msg []byte) error {
 			time.Sleep(processingTime)
 			processedCount.Add(1)
-			t.Logf("processed message %d", processedCount.Load())
+			t.Logf("processed message %s", string(msg))
 			return nil
 		}
 	}
