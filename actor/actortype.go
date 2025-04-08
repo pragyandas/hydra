@@ -2,15 +2,6 @@ package actor
 
 import "fmt"
 
-type ActorTypeOption func(*ActorType)
-
-type ActorTypeConfig struct {
-	MessageHandlerFactory MessageHandlerFactory
-	MessageErrorHandler   ErrorHandler
-	StateSerializer       StateSerializer
-	ActorConfig           Config
-}
-
 // ActorType defines the behavior of an actor type
 type ActorType struct {
 	Name                  string

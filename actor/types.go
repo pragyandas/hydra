@@ -53,3 +53,12 @@ type ActorId struct {
 func (id ActorId) String() string {
 	return fmt.Sprintf("%s.%s", id.Type, id.ID)
 }
+
+type ActorTypeOption func(*ActorType)
+
+type ActorTypeConfig struct {
+	MessageHandlerFactory MessageHandlerFactory
+	MessageErrorHandler   ErrorHandler
+	StateSerializer       StateSerializer
+	ActorConfig           Config
+}
