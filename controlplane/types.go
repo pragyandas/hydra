@@ -6,21 +6,6 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-type MemberInfo struct {
-	SystemID  string    `json:"system_id"`
-	Region    string    `json:"region"`
-	Status    string    `json:"status"`
-	Heartbeat time.Time `json:"heartbeat"`
-	Metrics   Metrics   `json:"metrics"`
-}
-
-// Currently a placeholder, but can be used in future for sophisticated bucket distribution
-type Metrics struct {
-	ActorCount  int     `json:"actor_count"`
-	MemoryUsage float64 `json:"memory_usage"`
-	CPUUsage    float64 `json:"cpu_usage"`
-}
-
 type MembershipConfig struct {
 	KVConfig          jetstream.KeyValueConfig
 	HeartbeatInterval time.Duration

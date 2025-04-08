@@ -2,10 +2,9 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,31 +19,40 @@ import (
 type Membership struct {
 	connection        *connection.Connection
 	kv                jetstream.KeyValue
-	members           map[string]*MemberInfo
-	membersChan       chan map[string]*MemberInfo
+	members           map[string]struct{}
 	mu                sync.RWMutex
 	membershipChanged chan struct{}
 	selfIndex         int
+
+	// TTL management for members
+	memberTimers     map[string]*time.Timer
+	memberTimerMu    sync.Mutex
+	expirationWindow time.Duration
 }
 
 func NewMembership(connection *connection.Connection, membershipChanged chan struct{}) *Membership {
 	return &Membership{
 		connection:        connection,
 		membershipChanged: membershipChanged,
-		members:           make(map[string]*MemberInfo),
-		membersChan:       make(chan map[string]*MemberInfo, 1),
+		members:           make(map[string]struct{}),
+		memberTimers:      make(map[string]*time.Timer),
 	}
 }
 
 func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
-	tracer := telemetry.GetTracer()
-	ctx, span := tracer.Start(ctx, "membership-start")
-	defer span.End()
+	logger := telemetry.GetLogger(ctx, "membership-start")
 
-	logger := telemetry.GetLogger(ctx, "membership")
+	// Set expiration window to 5 missed heartbeats
+	m.expirationWindow = config.HeartbeatInterval * 5
 
 	if err := m.initializeKV(ctx, config); err != nil {
 		logger.Error("failed to initialize KV store", zap.Error(err))
+		return err
+	}
+
+	revision, err := m.register(ctx)
+	if err != nil {
+		logger.Error("failed to register member", zap.Error(err))
 		return err
 	}
 
@@ -53,18 +61,26 @@ func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
 		return err
 	}
 
-	m.startBackgroundTasks(ctx, config.HeartbeatInterval)
-
-	if err := m.register(ctx); err != nil {
-		logger.Error("failed to register member", zap.Error(err))
-		return err
-	}
+	m.startBackgroundTasks(ctx, config.HeartbeatInterval, revision)
 
 	m.updateMemberPosition()
 
 	logger.Info("started control plane membership watcher")
 
 	return nil
+}
+
+func (m *Membership) Stop(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "membership-stop")
+
+	m.memberTimerMu.Lock()
+	for _, timer := range m.memberTimers {
+		timer.Stop()
+	}
+	m.memberTimers = make(map[string]*time.Timer)
+	m.memberTimerMu.Unlock()
+
+	logger.Debug("stopped membership service")
 }
 
 func (m *Membership) initializeKV(ctx context.Context, config MembershipConfig) error {
@@ -83,7 +99,35 @@ func (m *Membership) initializeKV(ctx context.Context, config MembershipConfig) 
 	return nil
 }
 
+func (m *Membership) register(ctx context.Context) (uint64, error) {
+	logger := telemetry.GetLogger(ctx, "membership-register")
+
+	systemID := common.GetSystemID()
+	region := common.GetRegion()
+
+	key := fmt.Sprintf("%s.%s", region, systemID)
+
+	revision, err := m.kv.Put(ctx, key, []byte(time.Now().Format(time.RFC3339)))
+	if err != nil {
+		return 0, fmt.Errorf("failed to register member: %w", err)
+	}
+
+	logger.Debug("registered member", zap.String("key", key), zap.Uint64("revision", revision))
+
+	return revision, nil
+}
+
+func getMemberIDFromKey(key string) string {
+	// key format: region.systemID
+	parts := strings.Split(key, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
 func (m *Membership) loadExistingState(ctx context.Context) error {
+	logger := telemetry.GetLogger(ctx, "membership-loadExistingState")
 	keys, err := m.kv.Keys(ctx)
 	if err != nil && err != jetstream.ErrNoKeysFound {
 		return fmt.Errorf("failed to list members: %w", err)
@@ -92,100 +136,60 @@ func (m *Membership) loadExistingState(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.members = make(map[string]*MemberInfo)
+	m.members = make(map[string]struct{})
 	for _, key := range keys {
-		entry, err := m.kv.Get(ctx, key)
-		if err != nil {
-			return fmt.Errorf("failed to get member info: %w", err)
+		systemID := getMemberIDFromKey(key)
+		if systemID == "" {
+			logger.Warn("invalid member key format", zap.String("key", key))
+			continue
 		}
 
-		var info MemberInfo
-		if err := json.Unmarshal(entry.Value(), &info); err != nil {
-			return fmt.Errorf("failed to unmarshal member info: %w", err)
-		}
-		m.members[info.SystemID] = &info
+		// Any members in KV store are valid due to TTL
+		m.members[systemID] = struct{}{}
+		m.resetMemberTimer(ctx, systemID)
 	}
 	return nil
 }
 
-func (m *Membership) register(ctx context.Context) error {
-	systemID, region := common.GetSystemID(), common.GetRegion()
-
-	info := &MemberInfo{
-		SystemID:  systemID,
-		Region:    region,
-		Heartbeat: time.Now(),
-		Metrics:   Metrics{},
-	}
-
-	data, err := json.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("failed to marshal member info: %w", err)
-	}
-
-	key := fmt.Sprintf("%s/%s/%s", m.kv.Bucket(), region, systemID)
-	_, err = m.kv.Put(ctx, key, data)
-	if err != nil {
-		return fmt.Errorf("failed to register member: %w", err)
-	}
-
-	m.members[systemID] = info
-
-	return nil
-}
-
-func (m *Membership) startBackgroundTasks(ctx context.Context, heartbeatInterval time.Duration) {
+func (m *Membership) startBackgroundTasks(ctx context.Context, heartbeatInterval time.Duration, revision uint64) {
 	logger := telemetry.GetLogger(ctx, "membership-startBackgroundTasks")
-	// Start the membership watcher
+
+	// Start the membership watcher to watch health of other members
 	go func() {
 		if err := m.watchMembers(ctx); err != nil && err != context.Canceled {
 			logger.Error("failed to watch members", zap.Error(err))
 		}
 	}()
 
-	// Start the heartbeat loop
-	go m.heartbeatLoop(ctx, heartbeatInterval)
+	// Start the self heartbeat loop
+	go m.heartbeatLoop(ctx, heartbeatInterval, revision)
 }
 
-func (m *Membership) heartbeatLoop(ctx context.Context, heartbeatInterval time.Duration) {
+func (m *Membership) heartbeatLoop(ctx context.Context, heartbeatInterval time.Duration, revision uint64) {
 	logger := telemetry.GetLogger(ctx, "membership-heartbeatLoop")
 
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
+
+	systemID := common.GetSystemID()
+	region := common.GetRegion()
+	key := fmt.Sprintf("%s.%s", region, systemID)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := m.heartbeat(ctx); err != nil {
+			// Just use current time as heartbeat value
+			newRevision, err := m.kv.Update(ctx, key, []byte(time.Now().Format(time.RFC3339)), revision)
+			if err != nil {
 				logger.Error("failed to heartbeat", zap.Error(err))
+				continue
 			}
+			revision = newRevision
+			logger.Debug("membership heartbeat", zap.String("key", key), zap.Uint64("revision", newRevision))
 		}
 	}
-}
-
-func (m *Membership) heartbeat(ctx context.Context) error {
-	systemID, region := common.GetSystemID(), common.GetRegion()
-	key := fmt.Sprintf("%s/%s/%s", m.kv.Bucket(), region, systemID)
-	info := &MemberInfo{
-		SystemID:  systemID,
-		Region:    region,
-		Heartbeat: time.Now(),
-		Metrics: Metrics{
-			ActorCount:  0,
-			MemoryUsage: 0,
-			CPUUsage:    0,
-		},
-	}
-
-	data, _ := json.Marshal(info)
-	_, err := m.kv.Put(ctx, key, data)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (m *Membership) updateMemberPosition() {
@@ -193,6 +197,7 @@ func (m *Membership) updateMemberPosition() {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	memberIDs := make([]string, 0, len(m.members))
 	for id := range m.members {
 		memberIDs = append(memberIDs, id)
@@ -216,9 +221,69 @@ func (m *Membership) GetMemberCountAndPosition() (memberCount int, selfIndex int
 	return len(m.members), m.selfIndex
 }
 
+func (m *Membership) checkExpiredMember(ctx context.Context, memberID string) {
+	logger := telemetry.GetLogger(ctx, "membership-checkExpiredMember")
+
+	m.memberTimerMu.Lock()
+	delete(m.memberTimers, memberID)
+	m.memberTimerMu.Unlock()
+
+	region := common.GetRegion()
+	key := fmt.Sprintf("%s.%s", region, memberID)
+
+	_, err := m.kv.Get(ctx, key)
+
+	if err != nil {
+		// Member is gone from KV, remove from our map
+		logger.Debug("member expired and not found in KV store", zap.String("memberID", memberID))
+
+		m.mu.Lock()
+		_, exists := m.members[memberID]
+		delete(m.members, memberID)
+		membershipChanged := exists // only notify if we actually had this member
+		m.updateMemberPosition()
+		m.mu.Unlock()
+
+		// Notify about membership change
+		if membershipChanged {
+			select {
+			case m.membershipChanged <- struct{}{}:
+			default:
+				logger.Debug("membership changed channel is full, dropping update")
+			}
+		}
+	} else {
+		// Member still exists in KV, reset the timer
+		m.resetMemberTimer(ctx, memberID)
+	}
+}
+
+func (m *Membership) resetMemberTimer(ctx context.Context, memberID string) {
+	// Timer is not needed for self
+	if memberID == common.GetSystemID() {
+		return
+	}
+
+	m.memberTimerMu.Lock()
+	defer m.memberTimerMu.Unlock()
+
+	if timer, exists := m.memberTimers[memberID]; exists {
+		timer.Stop()
+	}
+
+	// Create new timer
+	timer := time.AfterFunc(m.expirationWindow, func() {
+		m.checkExpiredMember(ctx, memberID)
+	})
+
+	m.memberTimers[memberID] = timer
+}
+
 func (m *Membership) watchMembers(ctx context.Context) error {
 	region := common.GetRegion()
-	watcher, err := m.kv.Watch(ctx, fmt.Sprintf("%s/%s/", m.kv.Bucket(), region))
+	logger := telemetry.GetLogger(ctx, "membership-watchMembers")
+
+	watcher, err := m.kv.Watch(ctx, region+".*")
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
 	}
@@ -227,37 +292,57 @@ func (m *Membership) watchMembers(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			// Stop all timers when context is done
+			m.memberTimerMu.Lock()
+			for _, timer := range m.memberTimers {
+				timer.Stop()
+			}
+			m.memberTimers = make(map[string]*time.Timer)
+			m.memberTimerMu.Unlock()
+
 			return ctx.Err()
+
 		case entry := <-watcher.Updates():
 			if entry == nil {
 				continue
 			}
 
-			m.mu.Lock()
-			var info MemberInfo
-			if err := json.Unmarshal(entry.Value(), &info); err != nil {
-				m.mu.Unlock()
+			systemID := getMemberIDFromKey(entry.Key())
+			if systemID == "" {
+				logger.Error("invalid member key format", zap.String("key", entry.Key()))
 				continue
 			}
 
-			membershipChanged := false
-			if entry.Operation() == jetstream.KeyValuePut {
-				m.members[info.SystemID] = &info
-				membershipChanged = true
-			} else if entry.Operation() == jetstream.KeyValueDelete {
-				delete(m.members, info.SystemID)
-				membershipChanged = true
+			// Ignore own heartbeat
+			if systemID == common.GetSystemID() {
+				continue
 			}
 
-			if membershipChanged {
-				m.updateMemberPosition()
-				select {
-				case m.membershipChanged <- struct{}{}:
-				default:
-					log.Printf("membership changed channel is full, dropping update")
+			if entry.Operation() == jetstream.KeyValuePut {
+				membershipChanged := false
+
+				m.mu.Lock()
+				_, exists := m.members[systemID]
+				if !exists {
+					// New member
+					m.members[systemID] = struct{}{}
+					membershipChanged = true
+				}
+				m.mu.Unlock()
+
+				// Reset member timer - all messages from watcher are fresh
+				m.resetMemberTimer(ctx, systemID)
+
+				if membershipChanged {
+					m.updateMemberPosition()
+
+					select {
+					case m.membershipChanged <- struct{}{}:
+					default:
+						logger.Debug("membership changed channel is full, dropping update")
+					}
 				}
 			}
-
 		}
 	}
 }
