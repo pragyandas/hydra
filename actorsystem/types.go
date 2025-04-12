@@ -10,7 +10,6 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/actor"
-	"github.com/pragyandas/hydra/common"
 	"github.com/pragyandas/hydra/controlplane"
 )
 
@@ -30,8 +29,8 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		ID:      common.GetSystemID(),
-		Region:  common.GetRegion(),
+		ID:      GetSystemID(),
+		Region:  GetRegion(),
 		NatsURL: nats.DefaultURL,
 		ActorConfig: actor.Config{
 			HeartbeatInterval:         GetActorLivenessHeartbeatInterval(),
@@ -78,6 +77,7 @@ func DefaultConfig() *Config {
 					Storage:     jetstream.FileStorage,
 				},
 			},
+			BucketRecalculationStabilizationInterval: 1 * time.Minute,
 		},
 		RetryInterval:                5 * time.Second,
 		ActorResurrectionConcurrency: 10,
@@ -94,6 +94,8 @@ const (
 )
 
 const (
+	EnvRegion                    = "REGION"
+	EnvSystemID                  = "SYSTEM_ID"
 	EnvStreamName                = "ACTORS_STREAM"
 	EnvKVBucket                  = "ACTORS_KV_BUCKET"
 	EnvActorLivenessKVBucket     = "ACTORS_ACTOR_LIVENESS_KV_BUCKET"
@@ -102,6 +104,20 @@ const (
 	EnvHeartbeatInterval         = "ACTORS_HEARTBEAT_INTERVAL"
 	EnvHeartbeatsMissedThreshold = "ACTORS_HEARTBEATS_MISSED_THRESHOLD"
 )
+
+func GetRegion() string {
+	if envRegion := os.Getenv(EnvRegion); envRegion != "" {
+		return envRegion
+	}
+	return "local"
+}
+
+func GetSystemID() string {
+	if envSystemID := os.Getenv(EnvSystemID); envSystemID != "" {
+		return envSystemID
+	}
+	return "actorsystem"
+}
 
 func GetStreamName() string {
 	if envStream := os.Getenv(EnvStreamName); envStream != "" {

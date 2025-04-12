@@ -14,14 +14,14 @@ func SetupTestActorsystem(t *testing.T, id string, conn *TestConnection) *actors
 	defaultConfig := actorsystem.DefaultConfig()
 	config := &actorsystem.Config{
 		ID:                    id,
-		NatsURL:               conn.Server.ClientURL(),
+		Region:                "test-region",
+		ActorConfig:           defaultConfig.ActorConfig,
 		MessageStreamConfig:   defaultConfig.MessageStreamConfig,
 		KVConfig:              defaultConfig.KVConfig,
 		ActorLivenessKVConfig: defaultConfig.ActorLivenessKVConfig,
-		ActorConfig:           defaultConfig.ActorConfig,
-		RetryInterval:         500 * time.Millisecond,
-		Region:                "test-region",
+		NatsURL:               conn.Server.ClientURL(),
 		ControlPlaneConfig:    defaultConfig.ControlPlaneConfig,
+		RetryInterval:         500 * time.Millisecond,
 	}
 
 	system, err := actorsystem.NewActorSystem(config)

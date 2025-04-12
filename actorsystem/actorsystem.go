@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/common"
 	"github.com/pragyandas/hydra/common/utils"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/controlplane"
@@ -43,6 +44,11 @@ func NewActorSystem(config *Config) (*ActorSystem, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+
+	// ID and Region are usually set by environment variables,
+	// which is usually POD name and region in k8s.
+	// This line allows setting custom systemID and region if needed
+	common.SetEnv(config.ID, config.Region)
 
 	system := &ActorSystem{
 		config:     config,
@@ -179,7 +185,7 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurre
 							zap.String("id", req.ID),
 							zap.Error(err))
 					} else {
-						logger.Info("actor resurrected successfully",
+						logger.Debug("actor resurrected successfully",
 							zap.String("type", req.Type),
 							zap.String("id", req.ID))
 					}

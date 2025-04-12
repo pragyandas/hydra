@@ -27,11 +27,10 @@
 
 ## Actor system
 
-- [ ] Distributed choas test for actor system
 - [ ] Add support for non-persistent actor
+- [ ] Distributed choas test for actor system cluster
 
 ## Bucket ownership
 
 - [ ] Adding bucket splitting/merging for better load balancing
-- [ ] Implementing hot bucket detection and rebalancing
-- [ ] Adding configurable bucket counts per node based on capacity
+- [ ] Hot bucket detection and rebalancing

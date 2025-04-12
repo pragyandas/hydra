@@ -1,40 +1,24 @@
 package common
 
-import (
-	"os"
-)
+// Singleton instance for quick access to commonly used environment variables
+var env Env
 
-const (
-	EnvSystemID = "SYSTEM_ID"
-	EnvRegion   = "REGION"
-)
+type Env struct {
+	SystemID string
+	Region   string
+}
 
-var systemID, region string
+func SetEnv(systemID, region string) {
+	env = Env{
+		SystemID: systemID,
+		Region:   region,
+	}
+}
 
 func GetSystemID() string {
-	if systemID != "" {
-		return systemID
-	}
-
-	if envSystemID := os.Getenv(EnvSystemID); envSystemID != "" {
-		systemID = envSystemID
-	} else {
-		systemID = "actorsystem"
-	}
-
-	return systemID
+	return env.SystemID
 }
 
 func GetRegion() string {
-	if region != "" {
-		return region
-	}
-
-	if envRegion := os.Getenv(EnvRegion); envRegion != "" {
-		region = envRegion
-	} else {
-		region = "local"
-	}
-
-	return region
+	return env.Region
 }

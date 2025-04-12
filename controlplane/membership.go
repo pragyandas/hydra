@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Manages system membership and discovery
+// Manages system membership and discovery of other members
 type Membership struct {
 	connection        *connection.Connection
 	kv                jetstream.KeyValue
@@ -180,7 +180,6 @@ func (m *Membership) heartbeatLoop(ctx context.Context, heartbeatInterval time.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Just use current time as heartbeat value
 			newRevision, err := m.kv.Update(ctx, key, []byte(time.Now().Format(time.RFC3339)), revision)
 			if err != nil {
 				logger.Error("failed to heartbeat", zap.Error(err))
@@ -234,32 +233,32 @@ func (m *Membership) checkExpiredMember(ctx context.Context, memberID string) {
 	_, err := m.kv.Get(ctx, key)
 
 	if err != nil {
-		// Member is gone from KV, remove from our map
-		logger.Debug("member expired and not found in KV store", zap.String("memberID", memberID))
+		// Member is dead
+		logger.Info("member expired and not found in KV store", zap.String("memberID", memberID))
 
 		m.mu.Lock()
 		_, exists := m.members[memberID]
 		delete(m.members, memberID)
-		membershipChanged := exists // only notify if we actually had this member
+		// safety check - only notify if we actually had this member
+		membershipChanged := exists
 		m.updateMemberPosition()
 		m.mu.Unlock()
 
-		// Notify about membership change
 		if membershipChanged {
+			logger.Info("membership changed", zap.String("memberID", memberID))
 			select {
 			case m.membershipChanged <- struct{}{}:
 			default:
-				logger.Debug("membership changed channel is full, dropping update")
+				logger.Info("membership changed channel is full, dropping update")
 			}
 		}
 	} else {
-		// Member still exists in KV, reset the timer
+		// Member still alive in KV, reset the timer
 		m.resetMemberTimer(ctx, memberID)
 	}
 }
 
 func (m *Membership) resetMemberTimer(ctx context.Context, memberID string) {
-	// Timer is not needed for self
 	if memberID == common.GetSystemID() {
 		return
 	}
@@ -292,7 +291,6 @@ func (m *Membership) watchMembers(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// Stop all timers when context is done
 			m.memberTimerMu.Lock()
 			for _, timer := range m.memberTimers {
 				timer.Stop()
@@ -330,10 +328,10 @@ func (m *Membership) watchMembers(ctx context.Context) error {
 				}
 				m.mu.Unlock()
 
-				// Reset member timer - all messages from watcher are fresh
 				m.resetMemberTimer(ctx, systemID)
 
 				if membershipChanged {
+					logger.Info("membership changed", zap.String("memberID", systemID))
 					m.updateMemberPosition()
 
 					select {
