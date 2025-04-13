@@ -112,6 +112,7 @@ func (bm *BucketManager) bucketDiscoveryLoop(ctx context.Context, interval time.
 			logger.Debug("bucket discovery loop cancelled")
 			return
 		case <-ticker.C:
+			logger.Info("discovery triggered, recalculating bucket ownership")
 			bm.RecalculateBuckets(ctx)
 		}
 	}
@@ -162,11 +163,12 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 	errChan := make(chan error, len(buckets))
 	// TODO: Use task queue here
 	// Tweak claim concurrency by changing the number of semaphore tokens
-	semaphore := make(chan struct{}, 10)
+	semaphore := make(chan struct{}, 20)
 
 	for _, bucket := range buckets {
 		// If we already own this bucket, skip it
 		if _, exists := bm.ownedBuckets[bucket]; exists {
+			logger.Info("bucket already owned, skipping", zap.Int("bucket", bucket))
 			continue
 		}
 
@@ -252,6 +254,20 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	}
 
 	if bm.membership.IsMemberActive(currentOwnership.Owner) {
+
+		if currentOwnership.Owner == systemID {
+			logger.Info("bucket already owned by self, skipping", zap.Int("bucket", bucket))
+			bm.mu.Lock()
+
+			// Safety check to make sure local state is consistent with the KV store
+			bm.ownedBuckets[bucket] = &currentOwnership
+			if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
+				logger.Error("failed to start actor death monitor", zap.Error(err))
+			}
+			bm.mu.Unlock()
+			return nil
+		}
+
 		bm.transferMu.Lock()
 		if _, exists := bm.pendingTransfers[fmt.Sprintf("%d", bucket)]; exists {
 			bm.transferMu.Unlock()
