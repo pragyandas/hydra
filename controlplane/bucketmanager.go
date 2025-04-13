@@ -27,9 +27,11 @@ type BucketManager struct {
 	kv                    jetstream.KeyValue
 	connection            *connection.Connection
 	mu                    sync.RWMutex
-	interestSub           *nats.Subscription
+	transferRequestSub    *nats.Subscription
 	claimMu               sync.Mutex
 	actorResurrectionChan chan actor.ActorId
+	pendingTransfers      map[string]*BucketTransferRequest
+	transferMu            sync.RWMutex
 }
 
 func NewBucketManager(connection *connection.Connection, membership *Membership, actorResurrectionChan chan actor.ActorId) *BucketManager {
@@ -39,6 +41,7 @@ func NewBucketManager(connection *connection.Connection, membership *Membership,
 		bucketMonitors:        make(map[int]*actormonitor.ActorDeathMonitor),
 		connection:            connection,
 		actorResurrectionChan: actorResurrectionChan,
+		pendingTransfers:      make(map[string]*BucketTransferRequest),
 	}
 }
 
@@ -60,9 +63,9 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 	}
 	bm.kv = kv
 
-	// Subscribe to bucket interest messages
-	if err := bm.setupBucketInterestSubscription(ctx); err != nil {
-		return fmt.Errorf("failed to setup bucket interest subscription: %w", err)
+	// Subscribe to bucket transfer request messages
+	if err := bm.setupBucketTransferSubscription(ctx); err != nil {
+		return fmt.Errorf("failed to setup bucket transfer subscription: %w", err)
 	}
 
 	// Start periodic bucket safety check
@@ -76,30 +79,24 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 func (bm *BucketManager) Stop(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-stop")
 
-	if bm.interestSub != nil {
-		bm.interestSub.Unsubscribe()
+	if bm.transferRequestSub != nil {
+		bm.transferRequestSub.Unsubscribe()
 	}
 
 	logger.Debug("stopped control plane bucket manager")
 }
 
-func (bm *BucketManager) setupBucketInterestSubscription(ctx context.Context) error {
-	logger := telemetry.GetLogger(ctx, "bucketmanager-setupBucketInterestSubscription")
+func (bm *BucketManager) setupBucketTransferSubscription(ctx context.Context) error {
 	region, systemID := common.GetRegion(), common.GetSystemID()
 
-	sub, err := bm.connection.NC.Subscribe(fmt.Sprintf("bucketinterest.%s.%s", region, systemID), func(msg *nats.Msg) {
-		var interest BucketInterest
-		if err := json.Unmarshal(msg.Data, &interest); err != nil {
-			logger.Error("failed to unmarshal bucket interest", zap.Error(err))
-			return
-		}
-		bm.handleInterest(ctx, &interest)
+	// Subscribe to transfer requests directed to this node
+	sub, err := bm.connection.NC.Subscribe(fmt.Sprintf("buckettransfer.request.%s.%s", region, systemID), func(msg *nats.Msg) {
+		bm.handleTransferRequest(ctx, msg)
 	})
-
 	if err != nil {
-		return fmt.Errorf("failed to subscribe to bucket interest: %w", err)
+		return fmt.Errorf("failed to subscribe to bucket transfer requests: %w", err)
 	}
-	bm.interestSub = sub
+	bm.transferRequestSub = sub
 	return nil
 }
 
@@ -145,6 +142,8 @@ func (bm *BucketManager) getEligibleBuckets(ctx context.Context) []int {
 		}
 	}
 
+	logger.Info("eligible buckets", zap.Ints("buckets", buckets))
+
 	return buckets
 }
 
@@ -166,6 +165,11 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 	semaphore := make(chan struct{}, 10)
 
 	for _, bucket := range buckets {
+		// If we already own this bucket, skip it
+		if _, exists := bm.ownedBuckets[bucket]; exists {
+			continue
+		}
+
 		wg.Add(1)
 		go func(b int) {
 			defer wg.Done()
@@ -210,43 +214,35 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 
 func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-claimBucket")
-
 	region, systemID := common.GetRegion(), common.GetSystemID()
 
-	// TODO: Make this . separated
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), region, bucket)
-	ownership := &BucketOwnership{
-		Owner:          systemID,
-		LastUpdateTime: time.Now(),
-	}
-
-	data, err := json.Marshal(ownership)
-	if err != nil {
-		return err
-	}
-
-	// Try to create first
-	_, err = bm.kv.Create(ctx, key, data)
-	if err == nil {
-		bm.mu.Lock()
-		bm.ownedBuckets[bucket] = ownership
-		bm.mu.Unlock()
-
-		if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
-			logger.Error("failed to start actor death monitor", zap.Error(err))
-		}
-
-		return nil
-	}
-
-	// If the bucket already exists, check if the owner is still active
-	if err != jetstream.ErrKeyExists {
-		return err
-	}
-
-	// Check current ownership
+	key := fmt.Sprintf("%s.%d", region, bucket)
 	entry, err := bm.kv.Get(ctx, key)
 	if err != nil {
+		if err == jetstream.ErrKeyNotFound {
+			logger.Info("bucket not found, claiming it", zap.Int("bucket", bucket))
+
+			ownership := &BucketOwnership{
+				Owner:          systemID,
+				LastUpdateTime: time.Now(),
+			}
+			data, err := json.Marshal(ownership)
+			if err != nil {
+				return err
+			}
+			_, err = bm.kv.Put(ctx, key, data)
+			if err != nil {
+				return err
+			}
+
+			bm.mu.Lock()
+			bm.ownedBuckets[bucket] = ownership
+			bm.mu.Unlock()
+
+			if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
+				return err
+			}
+		}
 		return err
 	}
 
@@ -255,31 +251,214 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 		return err
 	}
 
-	// If the owner is still active, send claim interest message to the owner
-	if !bm.isOwnerInactive(currentOwnership.Owner) {
-		bm.publishInterest(bucket, currentOwnership.Owner)
+	if bm.membership.IsMemberActive(currentOwnership.Owner) {
+		bm.transferMu.Lock()
+		if _, exists := bm.pendingTransfers[fmt.Sprintf("%d", bucket)]; exists {
+			bm.transferMu.Unlock()
+			return fmt.Errorf("transfer already pending for bucket %d", bucket)
+		}
+
+		bm.transferMu.Unlock()
+
+		go bm.requestBucketTransferAsync(ctx, bucket, currentOwnership.Owner, entry.Revision())
+		return nil
+	} else {
+		ownership := &BucketOwnership{
+			Owner:          systemID,
+			LastUpdateTime: time.Now(),
+		}
+		data, err := json.Marshal(ownership)
+		if err != nil {
+			return err
+		}
+		_, err = bm.kv.Update(ctx, key, data, entry.Revision())
+		if err != nil {
+			return err
+		}
+
+		bm.mu.Lock()
+		bm.ownedBuckets[bucket] = ownership
+		bm.mu.Unlock()
+
+		if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
+			logger.Error("failed to start actor death monitor", zap.Error(err))
+		}
 		return nil
 	}
+}
 
-	// Claim the bucket
-	_, err = bm.kv.Update(ctx, key, data, entry.Revision())
+// New async transfer method
+func (bm *BucketManager) requestBucketTransferAsync(ctx context.Context, bucket int, currentOwner string, revision uint64) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-requestBucketTransferAsync")
+	region, systemID := common.GetRegion(), common.GetSystemID()
+
+	// Create transfer request
+	request := &BucketTransferRequest{
+		BucketID: bucket,
+		FromNode: systemID,
+		ToNode:   systemID,
+	}
+	bm.transferMu.Lock()
+	bm.pendingTransfers[fmt.Sprintf("%d", bucket)] = request
+	bm.transferMu.Unlock()
+
+	defer func() {
+		bm.transferMu.Lock()
+		delete(bm.pendingTransfers, fmt.Sprintf("%d", bucket))
+		bm.transferMu.Unlock()
+	}()
+
+	requestData, err := json.Marshal(request)
 	if err != nil {
-		return err
+		logger.Error("failed to marshal transfer request",
+			zap.Error(err),
+			zap.Int("bucket", bucket))
+		return
 	}
 
-	bm.mu.Lock()
-	bm.ownedBuckets[bucket] = ownership
-	bm.mu.Unlock()
+	maxRetries := 3
+	baseDelay := 1 * time.Second
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff
+			delay := time.Duration(baseDelay * time.Duration(1<<attempt))
+			time.Sleep(delay)
+		}
 
-	if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
-		logger.Error("failed to start actor death monitor", zap.Error(err))
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		msg, err := bm.connection.NC.RequestWithContext(reqCtx,
+			fmt.Sprintf("buckettransfer.request.%s.%s", region, currentOwner),
+			requestData)
+		cancel()
+
+		if err != nil {
+			logger.Error("failed to send transfer request",
+				zap.Error(err),
+				zap.Int("attempt", attempt+1),
+				zap.Int("bucket", bucket))
+			continue
+		}
+
+		var response BucketTransferResponse
+		if err := json.Unmarshal(msg.Data, &response); err != nil {
+			logger.Error("failed to parse transfer response",
+				zap.Error(err),
+				zap.Int("attempt", attempt+1),
+				zap.Int("bucket", bucket))
+			continue
+		}
+
+		if !response.Approved {
+			logger.Info("transfer request was denied",
+				zap.Int("bucket", bucket),
+				zap.Int("attempt", attempt+1))
+			return
+		}
+
+		// Try to claim the bucket
+		ownership := &BucketOwnership{
+			Owner:          systemID,
+			LastUpdateTime: time.Now(),
+		}
+		data, err := json.Marshal(ownership)
+		if err != nil {
+			logger.Error("failed to marshal ownership",
+				zap.Error(err),
+				zap.Int("bucket", bucket))
+			return
+		}
+
+		key := fmt.Sprintf("%s.%d", region, bucket)
+		_, err = bm.kv.Update(ctx, key, data, revision)
+		if err != nil {
+			logger.Error("failed to claim bucket after transfer approval",
+				zap.Error(err),
+				zap.Int("bucket", bucket),
+				zap.Int("attempt", attempt+1))
+			continue
+		}
+
+		// Successfully claimed the bucket
+		bm.mu.Lock()
+		bm.ownedBuckets[bucket] = ownership
+		bm.mu.Unlock()
+
+		if err := bm.startActorDeathMonitor(ctx, bucket); err != nil {
+			logger.Error("failed to start actor death monitor",
+				zap.Error(err),
+				zap.Int("bucket", bucket))
+		}
+
+		logger.Info("successfully claimed bucket after transfer",
+			zap.Int("bucket", bucket),
+			zap.Int("attempt", attempt+1))
+		return
 	}
 
-	return nil
+	logger.Error("failed to transfer bucket after max retries",
+		zap.Int("bucket", bucket),
+		zap.Int("max_retries", maxRetries))
+}
+
+func (bm *BucketManager) handleTransferRequest(ctx context.Context, msg *nats.Msg) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-handleTransferRequest")
+
+	var request BucketTransferRequest
+	if err := json.Unmarshal(msg.Data, &request); err != nil {
+		logger.Error("failed to unmarshal transfer request", zap.Error(err))
+		return
+	}
+
+	logger.Info("received transfer request",
+		zap.Int("bucket", request.BucketID),
+		zap.String("from_node", request.FromNode))
+
+	response := &BucketTransferResponse{
+		BucketID: request.BucketID,
+		Approved: false, // Default to rejection
+	}
+
+	if _, exists := bm.ownedBuckets[request.BucketID]; !exists {
+		data, _ := json.Marshal(response)
+		msg.Respond(data)
+		return
+	}
+
+	memberCount, _ := bm.membership.GetMemberCountAndPosition()
+	fairShare := float64(bm.numBuckets) / float64(memberCount)
+	maxBuckets := int(fairShare * 1.1)
+
+	bm.mu.RLock()
+	ownedCount := len(bm.ownedBuckets)
+	bm.mu.RUnlock()
+
+	if ownedCount > maxBuckets {
+		bm.releaseBucket(ctx, request.BucketID)
+		response.Approved = true
+	} else {
+		logger.Info("bucket transfer rejected as node is not over capacity", zap.Int("bucket", request.BucketID))
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		logger.Error("failed to marshal transfer response", zap.Error(err))
+		return
+	}
+
+	if err := msg.Respond(data); err != nil {
+		logger.Error("failed to respond to transfer request", zap.Error(err))
+		return
+	}
+
+	logger.Info("sent transfer response",
+		zap.Int("bucket", request.BucketID),
+		zap.Bool("approved", response.Approved))
 }
 
 func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int) error {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-startBucketDeathMonitor")
+
+	logger.Info("claimed bucket, now starting death monitor", zap.Int("bucket", bucket))
 
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -299,40 +478,14 @@ func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int)
 	}
 
 	bm.bucketMonitors[bucket] = monitor
-	logger.Debug("started death monitor for bucket", zap.Int("bucket", bucket))
+	logger.Info("started death monitor for bucket", zap.Int("bucket", bucket))
 
 	return nil
 }
 
-func (bm *BucketManager) isOwnerInactive(owner string) bool {
-	return !bm.membership.IsMemberActive(owner)
-}
-
-func (bm *BucketManager) handleInterest(ctx context.Context, interest *BucketInterest) {
-	bm.mu.RLock()
-	owns := bm.ownedBuckets[interest.BucketID] != nil
-	ownedCount := len(bm.ownedBuckets)
-	bm.mu.RUnlock()
-
-	// If we don't own the bucket, we don't need to do anything
-	if !owns {
-		return
-	}
-
-	memberCount, _ := bm.membership.GetMemberCountAndPosition()
-
-	fairShare := float64(bm.numBuckets) / float64(memberCount)
-	// TODO: Make this configurable
-	maxBuckets := int(fairShare * 1.1) // 10% over fair shares
-
-	if ownedCount > maxBuckets {
-		bm.releaseBucket(ctx, interest.BucketID)
-	}
-}
-
 func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
 	region := common.GetRegion()
-	key := fmt.Sprintf("%s/%s/%d", bm.kv.Bucket(), region, bucket)
+	key := fmt.Sprintf("%s.%d", region, bucket)
 	err := bm.kv.Delete(ctx, key)
 	if err != nil {
 		log.Printf("failed to delete bucket %d: %v", bucket, err)
@@ -342,23 +495,6 @@ func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
 	bm.mu.Lock()
 	delete(bm.ownedBuckets, bucket)
 	bm.mu.Unlock()
-}
-
-func (bm *BucketManager) publishInterest(bucketID int, owner string) error {
-	region, systemID := common.GetRegion(), common.GetSystemID()
-
-	msg := &BucketInterest{
-		BucketID:  bucketID,
-		FromNode:  systemID,
-		Timestamp: time.Now(),
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	return bm.connection.NC.Publish(fmt.Sprintf("bucketinterest.%s.%s", region, owner), data)
 }
 
 func (bm *BucketManager) calculateBucket(actorType, actorID string) int {

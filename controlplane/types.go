@@ -24,6 +24,19 @@ type BucketInterest struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// BucketTransferRequest represents a request to transfer a bucket to another node
+type BucketTransferRequest struct {
+	BucketID int    `json:"bucket_id"`
+	FromNode string `json:"from_node"`
+	ToNode   string `json:"to_node"`
+}
+
+// BucketTransferResponse represents a response to a bucket transfer request
+type BucketTransferResponse struct {
+	BucketID int  `json:"bucket_id"`
+	Approved bool `json:"approved"`
+}
+
 type BucketManagerConfig struct {
 	NumBuckets          int
 	SafetyCheckInterval time.Duration
