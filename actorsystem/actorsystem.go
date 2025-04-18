@@ -276,3 +276,11 @@ func (system *ActorSystem) GetOrCreateActor(actorType string, id string) (*actor
 	}
 	return system.CreateActor(actorType, id)
 }
+
+func (system *ActorSystem) GetOwnedBuckets() []int {
+	return system.cp.GetOwnedBuckets()
+}
+
+func (system *ActorSystem) GetMemberCountAndPosition() (int, int) {
+	return system.cp.GetMemberCountAndPosition()
+}

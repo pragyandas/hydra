@@ -7,8 +7,9 @@ import (
 )
 
 type MembershipConfig struct {
-	KVConfig          jetstream.KeyValueConfig
-	HeartbeatInterval time.Duration
+	HeartbeatInterval        time.Duration
+	HeartbeatCheckInterval   time.Duration
+	HeartbeatMissedThreshold time.Duration
 }
 
 // BucketOwnership represents the current ownership status of a bucket
@@ -38,8 +39,7 @@ type BucketTransferResponse struct {
 }
 
 type BucketManagerConfig struct {
-	NumBuckets          int
-	SafetyCheckInterval time.Duration
-	KVConfig            jetstream.KeyValueConfig
-	DiscoveryInterval   time.Duration
+	NumBuckets        int
+	KVConfig          jetstream.KeyValueConfig
+	DiscoveryInterval time.Duration
 }

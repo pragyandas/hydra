@@ -22,7 +22,6 @@ func (t *TestConnection) Close() {
 	kvs := []string{
 		config.KVConfig.Bucket,
 		config.ActorLivenessKVConfig.Bucket,
-		config.ControlPlaneConfig.MembershipConfig.KVConfig.Bucket,
 		config.ControlPlaneConfig.BucketManagerConfig.KVConfig.Bucket,
 	}
 

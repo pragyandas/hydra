@@ -22,6 +22,8 @@ type ActorDeathMonitor struct {
 	mailboxMonitors       map[string]*ActorMailboxMonitor
 	actorResurrectionChan chan actor.ActorId
 	mu                    sync.RWMutex
+	wg                    sync.WaitGroup
+	done                  chan struct{}
 }
 
 func NewActorDeathMonitor(connection *connection.Connection, bucketID int, actorResurrectionChan chan actor.ActorId) *ActorDeathMonitor {
@@ -31,6 +33,7 @@ func NewActorDeathMonitor(connection *connection.Connection, bucketID int, actor
 		deadActors:            make(map[string]struct{}),
 		mailboxMonitors:       make(map[string]*ActorMailboxMonitor),
 		actorResurrectionChan: actorResurrectionChan,
+		done:                  make(chan struct{}),
 	}
 }
 
@@ -40,8 +43,22 @@ func (m *ActorDeathMonitor) Start(ctx context.Context) error {
 		return err
 	}
 
-	go m.monitorDeadActors(ctx)
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.monitorDeadActors(ctx)
+	}()
 	return nil
+}
+
+func (m *ActorDeathMonitor) Stop(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, monitor := range m.mailboxMonitors {
+		monitor.Stop()
+	}
+	close(m.done)
+	m.wg.Wait()
 }
 
 func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
@@ -118,6 +135,9 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 
 	for {
 		select {
+		case <-m.done:
+			logger.Debug("death monitor stopped")
+			return
 		case <-ctx.Done():
 			logger.Debug("context done, gracefully stopping death monitor")
 			return

@@ -18,6 +18,9 @@ type ControlPlane struct {
 	bucketRecalculationTimer *time.Timer
 	timerMu                  sync.Mutex
 	wg                       sync.WaitGroup
+	discoveryTicker          *time.Ticker
+	memberCount              int
+	selfIndex                int
 	membershipChanged        chan struct{}
 	done                     chan struct{}
 }
@@ -26,13 +29,14 @@ type Config struct {
 	MembershipConfig                         MembershipConfig
 	BucketManagerConfig                      BucketManagerConfig
 	BucketRecalculationStabilizationInterval time.Duration
+	BucketDiscoverySafetyCheckInterval       time.Duration
 }
 
 func New(connection *connection.Connection, actorResurrectionChan chan actor.ActorId) (*ControlPlane, error) {
 	cp := &ControlPlane{
 		connection:        connection,
 		done:              make(chan struct{}),
-		membershipChanged: make(chan struct{}, 1), // Buffered channel to avoid blocking
+		membershipChanged: make(chan struct{}, 10), // Buffered channel to avoid blocking
 	}
 
 	cp.membership = NewMembership(connection, cp.membershipChanged)
@@ -52,7 +56,10 @@ func (cp *ControlPlane) Start(ctx context.Context, config Config) error {
 		return err
 	}
 
-	cp.wg.Add(2)
+	cp.discoveryTicker = time.NewTicker(config.BucketDiscoverySafetyCheckInterval)
+	cp.memberCount, cp.selfIndex = cp.membership.GetMemberCountAndPosition()
+
+	cp.wg.Add(3)
 
 	go func() {
 		defer cp.wg.Done()
@@ -64,8 +71,38 @@ func (cp *ControlPlane) Start(ctx context.Context, config Config) error {
 		cp.handleBucketRecalculationTimer(ctx)
 	}()
 
+	go func() {
+		defer cp.wg.Done()
+		cp.handleBucketDiscoveryTicks(ctx)
+	}()
+
 	logger.Info("started control plane")
 	return nil
+}
+
+func (cp *ControlPlane) handlemembershipUpdate(ctx context.Context, stabilizationInterval time.Duration) {
+	logger := telemetry.GetLogger(ctx, "controlplane-membershipUpdate")
+
+	for {
+		select {
+		case <-cp.done:
+			return
+		case <-ctx.Done():
+			return
+		case <-cp.membershipChanged:
+			logger.Debug("membership changed, resetting stabilization timer",
+				zap.Duration("interval", stabilizationInterval))
+
+			cp.timerMu.Lock()
+			cp.memberCount, cp.selfIndex = cp.membership.GetMemberCountAndPosition()
+			if cp.bucketRecalculationTimer != nil {
+				cp.bucketRecalculationTimer.Reset(stabilizationInterval)
+			} else {
+				cp.bucketRecalculationTimer = time.NewTimer(stabilizationInterval)
+			}
+			cp.timerMu.Unlock()
+		}
+	}
 }
 
 func (cp *ControlPlane) handleBucketRecalculationTimer(ctx context.Context) {
@@ -108,8 +145,8 @@ func (cp *ControlPlane) handleBucketRecalculationTimer(ctx context.Context) {
 			return
 
 		case <-timerCh:
-			logger.Info("membership stabilized, recalculating buckets")
-			cp.bucketManager.RecalculateBuckets(ctx)
+			logger.Debug("membership stabilized, recalculating buckets")
+			cp.bucketManager.RecalculateBuckets(ctx, cp.memberCount, cp.selfIndex)
 
 			cp.timerMu.Lock()
 			cp.bucketRecalculationTimer = nil
@@ -118,26 +155,27 @@ func (cp *ControlPlane) handleBucketRecalculationTimer(ctx context.Context) {
 	}
 }
 
-func (cp *ControlPlane) handlemembershipUpdate(ctx context.Context, stabilizationInterval time.Duration) {
-	logger := telemetry.GetLogger(ctx, "controlplane-membershipUpdate")
+func (cp *ControlPlane) handleBucketDiscoveryTicks(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "controlplane-discoveryTicks")
 
 	for {
 		select {
-		case <-cp.done:
-			return
 		case <-ctx.Done():
 			return
-		case <-cp.membershipChanged:
-			logger.Info("membership changed, resetting stabilization timer",
-				zap.Duration("interval", stabilizationInterval))
-
+		case <-cp.done:
+			return
+		case <-cp.discoveryTicker.C:
+			// Only trigger discovery if not in stabilization window
 			cp.timerMu.Lock()
-			if cp.bucketRecalculationTimer != nil {
-				cp.bucketRecalculationTimer.Reset(stabilizationInterval)
-			} else {
-				cp.bucketRecalculationTimer = time.NewTimer(stabilizationInterval)
-			}
+			inStabilization := cp.bucketRecalculationTimer != nil
 			cp.timerMu.Unlock()
+
+			if !inStabilization {
+				logger.Debug("discovery tick triggered, recalculating buckets")
+				cp.bucketManager.RecalculateBuckets(ctx, cp.memberCount, cp.selfIndex)
+			} else {
+				logger.Debug("skipping discovery tick - in stabilization window")
+			}
 		}
 	}
 }
@@ -150,6 +188,9 @@ func (cp *ControlPlane) Stop(ctx context.Context) error {
 	cp.timerMu.Lock()
 	if cp.bucketRecalculationTimer != nil {
 		cp.bucketRecalculationTimer.Stop()
+	}
+	if cp.discoveryTicker != nil {
+		cp.discoveryTicker.Stop()
 	}
 	cp.timerMu.Unlock()
 
@@ -165,4 +206,12 @@ func (cp *ControlPlane) Stop(ctx context.Context) error {
 
 func (cp *ControlPlane) GetBucketKey(actorType, actorID string) string {
 	return cp.bucketManager.GetBucketKey(actorType, actorID)
+}
+
+func (cp *ControlPlane) GetOwnedBuckets() []int {
+	return cp.bucketManager.GetOwnedBuckets()
+}
+
+func (cp *ControlPlane) GetMemberCountAndPosition() (int, int) {
+	return cp.memberCount, cp.selfIndex
 }

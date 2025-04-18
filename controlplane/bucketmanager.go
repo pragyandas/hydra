@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"log"
 	"sync"
 	"time"
 
@@ -68,9 +67,6 @@ func (bm *BucketManager) Start(ctx context.Context, config BucketManagerConfig) 
 		return fmt.Errorf("failed to setup bucket transfer subscription: %w", err)
 	}
 
-	// Start periodic bucket safety check
-	go bm.bucketDiscoveryLoop(ctx, config.SafetyCheckInterval)
-
 	logger.Debug("started bucket manager")
 
 	return nil
@@ -84,6 +80,18 @@ func (bm *BucketManager) Stop(ctx context.Context) {
 	}
 
 	logger.Debug("stopped control plane bucket manager")
+}
+
+func (bm *BucketManager) GetOwnedBuckets() []int {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+
+	ownedBuckets := make([]int, 0, len(bm.ownedBuckets))
+	for bucket, _ := range bm.ownedBuckets {
+		ownedBuckets = append(ownedBuckets, bucket)
+	}
+
+	return ownedBuckets
 }
 
 func (bm *BucketManager) setupBucketTransferSubscription(ctx context.Context) error {
@@ -100,36 +108,38 @@ func (bm *BucketManager) setupBucketTransferSubscription(ctx context.Context) er
 	return nil
 }
 
-func (bm *BucketManager) bucketDiscoveryLoop(ctx context.Context, interval time.Duration) {
-	logger := telemetry.GetLogger(ctx, "bucketmanager-bucketDiscoveryLoop")
+func (bm *BucketManager) RecalculateBuckets(ctx context.Context, memberCount, selfIndex int) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-recalculateBuckets")
+	eligibleBuckets := bm.getEligibleBuckets(ctx, memberCount, selfIndex)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	eligibleSet := make(map[int]struct{})
+	for _, b := range eligibleBuckets {
+		eligibleSet[b] = struct{}{}
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Debug("bucket discovery loop cancelled")
-			return
-		case <-ticker.C:
-			logger.Info("discovery triggered, recalculating bucket ownership")
-			bm.RecalculateBuckets(ctx)
+	// Release buckets we shouldn't own
+	bm.mu.RLock()
+	bucketsToRelease := make([]int, 0)
+	for bucket := range bm.ownedBuckets {
+		if _, isEligible := eligibleSet[bucket]; !isEligible {
+			bucketsToRelease = append(bucketsToRelease, bucket)
 		}
 	}
-}
+	bm.mu.RUnlock()
 
-func (bm *BucketManager) RecalculateBuckets(ctx context.Context) {
-	eligibleBuckets := bm.getEligibleBuckets(ctx)
+	for _, bucket := range bucketsToRelease {
+		logger.Debug("releasing ineligible bucket", zap.Int("bucket", bucket))
+		bm.releaseBucket(ctx, bucket)
+	}
 
 	if len(eligibleBuckets) > 0 {
 		bm.tryClaimBuckets(ctx, eligibleBuckets)
 	}
 }
 
-func (bm *BucketManager) getEligibleBuckets(ctx context.Context) []int {
+func (bm *BucketManager) getEligibleBuckets(ctx context.Context, memberCount, selfIndex int) []int {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-getEligibleBuckets")
 
-	memberCount, selfIndex := bm.membership.GetMemberCountAndPosition()
 	if selfIndex == -1 {
 		logger.Warn("couldn't find self in member list")
 		return nil
@@ -143,7 +153,7 @@ func (bm *BucketManager) getEligibleBuckets(ctx context.Context) []int {
 		}
 	}
 
-	logger.Info("eligible buckets", zap.Ints("buckets", buckets))
+	logger.Debug("eligible buckets", zap.Ints("buckets", buckets))
 
 	return buckets
 }
@@ -168,7 +178,7 @@ func (bm *BucketManager) tryClaimBuckets(ctx context.Context, buckets []int) {
 	for _, bucket := range buckets {
 		// If we already own this bucket, skip it
 		if _, exists := bm.ownedBuckets[bucket]; exists {
-			logger.Info("bucket already owned, skipping", zap.Int("bucket", bucket))
+			logger.Debug("bucket already owned, skipping", zap.Int("bucket", bucket))
 			continue
 		}
 
@@ -222,7 +232,7 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	entry, err := bm.kv.Get(ctx, key)
 	if err != nil {
 		if err == jetstream.ErrKeyNotFound {
-			logger.Info("bucket not found, claiming it", zap.Int("bucket", bucket))
+			logger.Debug("bucket not found, claiming it", zap.Int("bucket", bucket))
 
 			ownership := &BucketOwnership{
 				Owner:          systemID,
@@ -256,7 +266,7 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	if bm.membership.IsMemberActive(currentOwnership.Owner) {
 
 		if currentOwnership.Owner == systemID {
-			logger.Info("bucket already owned by self, skipping", zap.Int("bucket", bucket))
+			logger.Debug("bucket already owned by self, skipping", zap.Int("bucket", bucket))
 			bm.mu.Lock()
 
 			// Safety check to make sure local state is consistent with the KV store
@@ -303,7 +313,6 @@ func (bm *BucketManager) claimBucket(ctx context.Context, bucket int) error {
 	}
 }
 
-// New async transfer method
 func (bm *BucketManager) requestBucketTransferAsync(ctx context.Context, bucket int, currentOwner string, revision uint64) {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-requestBucketTransferAsync")
 	region, systemID := common.GetRegion(), common.GetSystemID()
@@ -365,7 +374,7 @@ func (bm *BucketManager) requestBucketTransferAsync(ctx context.Context, bucket 
 		}
 
 		if !response.Approved {
-			logger.Info("transfer request was denied",
+			logger.Debug("transfer request was denied",
 				zap.Int("bucket", bucket),
 				zap.Int("attempt", attempt+1))
 			return
@@ -385,7 +394,7 @@ func (bm *BucketManager) requestBucketTransferAsync(ctx context.Context, bucket 
 		}
 
 		key := fmt.Sprintf("%s.%d", region, bucket)
-		_, err = bm.kv.Update(ctx, key, data, revision)
+		_, err = bm.kv.Put(ctx, key, data)
 		if err != nil {
 			logger.Error("failed to claim bucket after transfer approval",
 				zap.Error(err),
@@ -405,7 +414,7 @@ func (bm *BucketManager) requestBucketTransferAsync(ctx context.Context, bucket 
 				zap.Int("bucket", bucket))
 		}
 
-		logger.Info("successfully claimed bucket after transfer",
+		logger.Debug("successfully claimed bucket after transfer",
 			zap.Int("bucket", bucket),
 			zap.Int("attempt", attempt+1))
 		return
@@ -425,7 +434,7 @@ func (bm *BucketManager) handleTransferRequest(ctx context.Context, msg *nats.Ms
 		return
 	}
 
-	logger.Info("received transfer request",
+	logger.Debug("received transfer request",
 		zap.Int("bucket", request.BucketID),
 		zap.String("from_node", request.FromNode))
 
@@ -440,20 +449,8 @@ func (bm *BucketManager) handleTransferRequest(ctx context.Context, msg *nats.Ms
 		return
 	}
 
-	memberCount, _ := bm.membership.GetMemberCountAndPosition()
-	fairShare := float64(bm.numBuckets) / float64(memberCount)
-	maxBuckets := int(fairShare * 1.1)
-
-	bm.mu.RLock()
-	ownedCount := len(bm.ownedBuckets)
-	bm.mu.RUnlock()
-
-	if ownedCount > maxBuckets {
-		bm.releaseBucket(ctx, request.BucketID)
-		response.Approved = true
-	} else {
-		logger.Info("bucket transfer rejected as node is not over capacity", zap.Int("bucket", request.BucketID))
-	}
+	bm.releaseBucket(ctx, request.BucketID)
+	response.Approved = true
 
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -466,7 +463,7 @@ func (bm *BucketManager) handleTransferRequest(ctx context.Context, msg *nats.Ms
 		return
 	}
 
-	logger.Info("sent transfer response",
+	logger.Debug("sent transfer response",
 		zap.Int("bucket", request.BucketID),
 		zap.Bool("approved", response.Approved))
 }
@@ -474,7 +471,7 @@ func (bm *BucketManager) handleTransferRequest(ctx context.Context, msg *nats.Ms
 func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int) error {
 	logger := telemetry.GetLogger(ctx, "bucketmanager-startBucketDeathMonitor")
 
-	logger.Info("claimed bucket, now starting death monitor", zap.Int("bucket", bucket))
+	logger.Debug("claimed bucket, now starting death monitor", zap.Int("bucket", bucket))
 
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -494,23 +491,31 @@ func (bm *BucketManager) startActorDeathMonitor(ctx context.Context, bucket int)
 	}
 
 	bm.bucketMonitors[bucket] = monitor
-	logger.Info("started death monitor for bucket", zap.Int("bucket", bucket))
+	logger.Debug("started death monitor for bucket", zap.Int("bucket", bucket))
 
 	return nil
 }
 
 func (bm *BucketManager) releaseBucket(ctx context.Context, bucket int) {
+	logger := telemetry.GetLogger(ctx, "bucketmanager-releaseBucket")
 	region := common.GetRegion()
 	key := fmt.Sprintf("%s.%d", region, bucket)
 	err := bm.kv.Delete(ctx, key)
 	if err != nil {
-		log.Printf("failed to delete bucket %d: %v", bucket, err)
+		logger.Error("failed to delete bucket", zap.Int("bucket", bucket), zap.Error(err))
 		return
 	}
 
 	bm.mu.Lock()
 	delete(bm.ownedBuckets, bucket)
+	// Stop and cleanup the bucket monitor
+	if monitor, exists := bm.bucketMonitors[bucket]; exists {
+		monitor.Stop(ctx)
+		delete(bm.bucketMonitors, bucket)
+	}
 	bm.mu.Unlock()
+
+	logger.Debug("released bucket", zap.Int("bucket", bucket))
 }
 
 func (bm *BucketManager) calculateBucket(actorType, actorID string) int {

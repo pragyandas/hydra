@@ -11,13 +11,6 @@ import (
 	"github.com/pragyandas/hydra/test/e2e/utils"
 )
 
-// Create two actor systems in same region
-// Create 100 actors distributed across two actor systems
-// Send messages between actors
-// Stop one actor system
-// Ensure that the actors in the stopped actor system are resurrected in the remaining actor system
-// Ensure that the messages are delivered to the actors in the remaining actor system
-
 func TestActorSystemMembershipUpdate(t *testing.T) {
 	testContext, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -41,7 +34,7 @@ func TestActorSystemMembershipUpdate(t *testing.T) {
 	system1.RegisterActorType("test", actor.ActorTypeConfig{
 		MessageHandlerFactory: func(self *actor.Actor) actor.MessageHandler {
 			return func(msg []byte) error {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 				processedMessagesCount.Add(1)
 				return nil
 			}
@@ -73,7 +66,7 @@ func TestActorSystemMembershipUpdate(t *testing.T) {
 	system2.RegisterActorType("test", actor.ActorTypeConfig{
 		MessageHandlerFactory: func(self *actor.Actor) actor.MessageHandler {
 			return func(msg []byte) error {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 				processedMessagesCount.Add(1)
 				return nil
 			}

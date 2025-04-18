@@ -59,25 +59,20 @@ func DefaultConfig() *Config {
 		},
 		ControlPlaneConfig: controlplane.Config{
 			MembershipConfig: controlplane.MembershipConfig{
-				KVConfig: jetstream.KeyValueConfig{
-					Bucket:      GetMembershipKVBucket(),
-					Description: "Membership data store",
-					Storage:     jetstream.FileStorage,
-					History:     1,
-					TTL:         3 * time.Second,
-				},
-				HeartbeatInterval: 1 * time.Second,
+				HeartbeatInterval:        1 * time.Second,
+				HeartbeatCheckInterval:   500 * time.Millisecond,
+				HeartbeatMissedThreshold: 3 * time.Second,
 			},
 			BucketManagerConfig: controlplane.BucketManagerConfig{
-				NumBuckets:          16,
-				SafetyCheckInterval: 5 * time.Second,
+				NumBuckets: 16,
 				KVConfig: jetstream.KeyValueConfig{
 					Bucket:      GetBucketOwnershipKVBucket(),
 					Description: "Bucket ownership data store",
 					Storage:     jetstream.FileStorage,
 				},
 			},
-			BucketRecalculationStabilizationInterval: 1 * time.Minute,
+			BucketRecalculationStabilizationInterval: 5 * time.Second,
+			BucketDiscoverySafetyCheckInterval:       5 * time.Second,
 		},
 		RetryInterval:                5 * time.Second,
 		ActorResurrectionConcurrency: 10,
