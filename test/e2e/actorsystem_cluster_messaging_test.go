@@ -12,7 +12,7 @@ import (
 )
 
 func TestActorSystemMembershipUpdate(t *testing.T) {
-	testContext, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	testContext, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	conn := utils.SetupTestConnection(t)
@@ -24,7 +24,7 @@ func TestActorSystemMembershipUpdate(t *testing.T) {
 
 	t.Logf("setting up system1")
 
-	system1 := utils.SetupTestActorsystem(t, "system1", conn)
+	system1 := utils.SetupTestActorsystem(t, "system1", conn, nil)
 
 	if err := system1.Start(testContext); err != nil {
 		t.Fatalf("Failed to start actor system: %v", err)
@@ -57,7 +57,7 @@ func TestActorSystemMembershipUpdate(t *testing.T) {
 
 	t.Logf("setting up system2")
 
-	system2 := utils.SetupTestActorsystem(t, "system2", conn)
+	system2 := utils.SetupTestActorsystem(t, "system2", conn, nil)
 
 	if err := system2.Start(testContext); err != nil {
 		t.Fatalf("Failed to start actor system: %v", err)
@@ -83,8 +83,6 @@ func TestActorSystemMembershipUpdate(t *testing.T) {
 	}
 
 	t.Logf("system2 started")
-
-	time.Sleep(5 * time.Minute)
 
 	// Send messages from actors in system1 to actors in system2
 	var numMessages int32

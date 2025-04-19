@@ -20,7 +20,7 @@ func TestActorCommunication(t *testing.T) {
 	conn := utils.SetupTestConnection(t)
 	defer conn.Close()
 
-	system := utils.SetupTestActorsystem(t, "test-system", conn)
+	system := utils.SetupTestActorsystem(t, "test-system", conn, nil)
 	if err := system.Start(testContext); err != nil {
 		t.Fatalf("Failed to start actor system: %v", err)
 	}

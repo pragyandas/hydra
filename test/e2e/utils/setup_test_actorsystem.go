@@ -10,10 +10,16 @@ import (
 
 var TestDurationFlag = flag.Duration("test.duration", 5*time.Second, "Duration for the actor communication test")
 
-func SetupTestActorsystem(t *testing.T, id string, conn *TestConnection) *actorsystem.ActorSystem {
-	defaultConfig := actorsystem.DefaultConfig()
+func SetupTestActorsystem(t *testing.T, id string, conn *TestConnection, config *actorsystem.Config) *actorsystem.ActorSystem {
+	var defaultConfig *actorsystem.Config
+	if config != nil {
+		defaultConfig = config
+	} else {
+		defaultConfig = actorsystem.DefaultConfig()
+	}
+
 	defaultConfig.ControlPlaneConfig.BucketRecalculationStabilizationInterval = 5 * time.Second
-	config := &actorsystem.Config{
+	config = &actorsystem.Config{
 		ID:                    id,
 		Region:                "test-region",
 		ActorConfig:           defaultConfig.ActorConfig,
