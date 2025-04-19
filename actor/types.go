@@ -39,7 +39,7 @@ type MessageHandlerFactory func(actor *Actor) MessageHandler
 
 type ErrorHandler func(err error, msg Message)
 
-type TransportFactory func(actor *Actor) (ActorTransport, error)
+type TransportFactory func(ctx context.Context, actor *Actor) (ActorTransport, error)
 
 type StateManagerFactory func(actor *Actor, stateSerializer StateSerializer) ActorStateManager
 

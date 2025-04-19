@@ -45,11 +45,6 @@ func NewActorSystem(config *Config) (*ActorSystem, error) {
 		config = DefaultConfig()
 	}
 
-	// ID and Region are usually set by environment variables,
-	// which is usually POD name and region in k8s.
-	// This line allows setting custom systemID and region if needed
-	common.SetEnv(config.ID, config.Region)
-
 	system := &ActorSystem{
 		config:     config,
 		actors:     make(map[string]*systemActor),
@@ -60,8 +55,11 @@ func NewActorSystem(config *Config) (*ActorSystem, error) {
 }
 
 func (system *ActorSystem) Start(ctx context.Context) error {
+
+	ctx = context.WithValue(ctx, common.SystemIDKey, system.config.ID)
+	ctx = context.WithValue(ctx, common.RegionKey, system.config.Region)
+
 	ctx, cancel := context.WithCancel(ctx)
-	ctx = context.WithValue(ctx, idKey, system.config.ID)
 	system.ctxCancel = cancel
 
 	logger := telemetry.GetLogger(ctx, "actorsystem-start")
@@ -116,6 +114,9 @@ func (system *ActorSystem) Start(ctx context.Context) error {
 }
 
 func (system *ActorSystem) Close(ctx context.Context) {
+	ctx = context.WithValue(ctx, common.SystemIDKey, system.config.ID)
+	ctx = context.WithValue(ctx, common.RegionKey, system.config.Region)
+
 	logger := telemetry.GetLogger(ctx, "actorsystem-close")
 
 	if system.ctxCancel != nil {
@@ -133,6 +134,7 @@ func (system *ActorSystem) Close(ctx context.Context) {
 			if status.actor != nil {
 				status.actor.Close()
 			}
+
 		}
 		// Reset the actors map
 		system.actors = make(map[string]*systemActor)
@@ -198,10 +200,10 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurre
 
 }
 
-func (system *ActorSystem) createActorTransport(a *actor.Actor) (actor.ActorTransport, error) {
+func (system *ActorSystem) createActorTransport(ctx context.Context, a *actor.Actor) (actor.ActorTransport, error) {
 
 	getKVKey := func(actorType, actorID string) string {
-		actorBucket := system.cp.GetBucketKey(actorType, actorID)
+		actorBucket := system.cp.GetBucketKey(ctx, actorType, actorID)
 		return actorBucket
 	}
 

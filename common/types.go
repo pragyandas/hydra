@@ -1,24 +1,18 @@
 package common
 
-// Singleton instance for quick access to commonly used environment variables
-var env Env
+import "context"
 
-type Env struct {
-	SystemID string
-	Region   string
+type contextKey string
+
+const (
+	SystemIDKey = contextKey("system_id")
+	RegionKey   = contextKey("region")
+)
+
+func GetSystemID(ctx context.Context) string {
+	return ctx.Value(SystemIDKey).(string)
 }
 
-func SetEnv(systemID, region string) {
-	env = Env{
-		SystemID: systemID,
-		Region:   region,
-	}
-}
-
-func GetSystemID() string {
-	return env.SystemID
-}
-
-func GetRegion() string {
-	return env.Region
+func GetRegion(ctx context.Context) string {
+	return ctx.Value(RegionKey).(string)
 }

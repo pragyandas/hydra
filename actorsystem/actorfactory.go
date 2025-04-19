@@ -31,7 +31,7 @@ func newActorFactory(ctx context.Context, defaultConfig actor.Config) ActorFacto
 
 		// Create components using actor instance
 		messageHandler := actorType.MessageHandlerFactory(actor)
-		transport, err := transportFactory(actor)
+		transport, err := transportFactory(ctx, actor)
 		if err != nil {
 			logger.Error("failed to create transport", zap.Error(err))
 			return nil, err

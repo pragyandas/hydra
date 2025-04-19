@@ -145,7 +145,7 @@ func (cp *ControlPlane) handleBucketRecalculationTimer(ctx context.Context) {
 			return
 
 		case <-timerCh:
-			logger.Debug("membership stabilized, recalculating buckets")
+			logger.Info("membership stabilized, recalculating buckets")
 			cp.bucketManager.RecalculateBuckets(ctx, cp.memberCount, cp.selfIndex)
 
 			cp.timerMu.Lock()
@@ -171,10 +171,10 @@ func (cp *ControlPlane) handleBucketDiscoveryTicks(ctx context.Context) {
 			cp.timerMu.Unlock()
 
 			if !inStabilization {
-				logger.Debug("discovery tick triggered, recalculating buckets")
+				logger.Info("discovery tick triggered, recalculating buckets")
 				cp.bucketManager.RecalculateBuckets(ctx, cp.memberCount, cp.selfIndex)
 			} else {
-				logger.Debug("skipping discovery tick - in stabilization window")
+				logger.Info("skipping discovery tick - in stabilization window")
 			}
 		}
 	}
@@ -204,8 +204,8 @@ func (cp *ControlPlane) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (cp *ControlPlane) GetBucketKey(actorType, actorID string) string {
-	return cp.bucketManager.GetBucketKey(actorType, actorID)
+func (cp *ControlPlane) GetBucketKey(ctx context.Context, actorType, actorID string) string {
+	return cp.bucketManager.GetBucketKey(ctx, actorType, actorID)
 }
 
 func (cp *ControlPlane) GetOwnedBuckets() []int {

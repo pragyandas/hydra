@@ -35,14 +35,15 @@ func NewMembership(connection *connection.Connection, membershipChanged chan str
 		connection:        connection,
 		members:           make(map[string]time.Time),
 		membershipChanged: membershipChanged,
-		selfID:            common.GetSystemID(),
-		region:            common.GetRegion(),
 		done:              make(chan struct{}),
 	}
 }
 
 func (m *Membership) Start(ctx context.Context, config MembershipConfig) error {
 	logger := telemetry.GetLogger(ctx, "membership-start")
+
+	m.region = common.GetRegion(ctx)
+	m.selfID = common.GetSystemID(ctx)
 
 	m.config = config
 

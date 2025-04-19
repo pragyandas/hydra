@@ -52,6 +52,8 @@ func (m *ActorDeathMonitor) Start(ctx context.Context) error {
 }
 
 func (m *ActorDeathMonitor) Stop(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "death-monitor-stop")
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, monitor := range m.mailboxMonitors {
@@ -59,12 +61,14 @@ func (m *ActorDeathMonitor) Stop(ctx context.Context) {
 	}
 	close(m.done)
 	m.wg.Wait()
+
+	logger.Debug("stopped death monitor for bucket", zap.Int("bucket", m.bucketID))
 }
 
 func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 	logger := telemetry.GetLogger(ctx, "death-monitor-find-dead-actors")
 
-	region := common.GetRegion()
+	region := common.GetRegion(ctx)
 
 	// Get all registered actors
 	registrationPrefix := fmt.Sprintf("%s.%d", region, m.bucketID)
@@ -119,7 +123,7 @@ func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 	logger := telemetry.GetLogger(ctx, "death-monitor-monitor-dead-actors")
 
-	region := common.GetRegion()
+	region := common.GetRegion(ctx)
 	prefix := fmt.Sprintf("%s.%d.*.*", region, m.bucketID)
 
 	watcher, err := m.connection.ActorLivenessKV.Watch(ctx, prefix)

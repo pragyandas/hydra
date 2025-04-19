@@ -16,16 +16,14 @@ func GetLogger(ctx context.Context, component string) otelzap.LoggerWithCtx {
 		if err != nil {
 			panic(err)
 		}
-		l := otelzap.New(zapLogger,
-			otelzap.WithExtraFields(
-				zap.String("system_id", common.GetSystemID()),
-				zap.String("region", common.GetRegion()),
-			),
-			otelzap.WithMinLevel(zap.InfoLevel),
-		)
-
-		logger = l
+		logger = otelzap.New(zapLogger, otelzap.WithMinLevel(zap.InfoLevel))
 	}
 
-	return logger.Ctx(ctx).WithOptions(zap.Fields(zap.String("component", component)))
+	return logger.Ctx(ctx).WithOptions(
+		zap.Fields(
+			zap.String("component", component),
+			zap.String("system_id", common.GetSystemID(ctx)),
+			zap.String("region", common.GetRegion(ctx)),
+		),
+	)
 }
