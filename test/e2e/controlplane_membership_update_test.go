@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestControlPlaneMembershipUpdate(t *testing.T) {
+func TestControlPlaneMembershipBucketUpdate(t *testing.T) {
 	config := actorsystem.DefaultConfig()
 	stabilizationInterval := config.ControlPlaneConfig.BucketRecalculationStabilizationInterval
 
