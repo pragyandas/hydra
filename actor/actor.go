@@ -56,7 +56,6 @@ func (a *Actor) WithConfig(config Config) *Actor {
 }
 
 func NewActor(
-	ctx context.Context,
 	id string,
 	actorType string,
 	opts ...ActorOption,

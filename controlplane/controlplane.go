@@ -204,8 +204,8 @@ func (cp *ControlPlane) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (cp *ControlPlane) GetBucketKey(ctx context.Context, actorType, actorID string) string {
-	return cp.bucketManager.GetBucketKey(ctx, actorType, actorID)
+func (cp *ControlPlane) GetBucketKey(actorType, actorID, region string) string {
+	return cp.bucketManager.GetBucketKey(actorType, actorID, region)
 }
 
 func (cp *ControlPlane) GetOwnedBuckets() []int {

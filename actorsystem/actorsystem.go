@@ -200,10 +200,10 @@ func (system *ActorSystem) handleActorResurrection(ctx context.Context, concurre
 
 }
 
-func (system *ActorSystem) createActorTransport(ctx context.Context, a *actor.Actor) (actor.ActorTransport, error) {
+func (system *ActorSystem) createActorTransport(a *actor.Actor) (actor.ActorTransport, error) {
 
 	getKVKey := func(actorType, actorID string) string {
-		actorBucket := system.cp.GetBucketKey(ctx, actorType, actorID)
+		actorBucket := system.cp.GetBucketKey(actorType, actorID, system.config.Region)
 		return actorBucket
 	}
 

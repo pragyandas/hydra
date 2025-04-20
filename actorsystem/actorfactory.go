@@ -23,7 +23,7 @@ func newActorFactory(ctx context.Context, defaultConfig actor.Config) ActorFacto
 		logger := telemetry.GetLogger(ctx, "actorsystem-new-actor")
 
 		// Create base actor first
-		actor, err := actor.NewActor(ctx, id, actorType.Name)
+		actor, err := actor.NewActor(id, actorType.Name)
 		if err != nil {
 			logger.Error("failed to create actor", zap.Error(err))
 			return nil, err
@@ -31,7 +31,7 @@ func newActorFactory(ctx context.Context, defaultConfig actor.Config) ActorFacto
 
 		// Create components using actor instance
 		messageHandler := actorType.MessageHandlerFactory(actor)
-		transport, err := transportFactory(ctx, actor)
+		transport, err := transportFactory(actor)
 		if err != nil {
 			logger.Error("failed to create transport", zap.Error(err))
 			return nil, err

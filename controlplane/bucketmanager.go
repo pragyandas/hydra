@@ -359,8 +359,7 @@ func (bm *BucketManager) calculateBucket(actorType, actorID string) int {
 }
 
 // GetBucketKey returns the KV store key for an actor
-func (bm *BucketManager) GetBucketKey(ctx context.Context, actorType, actorID string) string {
-	region := common.GetRegion(ctx)
+func (bm *BucketManager) GetBucketKey(actorType, actorID, region string) string {
 	bucket := bm.calculateBucket(actorType, actorID)
 	return fmt.Sprintf("%s.%d.%s.%s", region, bucket, actorType, actorID)
 }
