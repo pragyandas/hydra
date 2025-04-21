@@ -43,6 +43,14 @@ func (t *ActorTransport) Setup(ctx context.Context, heartbeatInterval time.Durat
 	// Reference: controlplane/bucketmanager.go
 	actorBucketKey := t.getKVKey(t.actor.Type(), t.actor.ID())
 
+	// To avoid multiple actor instances due to split brain in membership change,
+	// we check if the actor is already active elsewhere
+	entry, err := t.connection.ActorLivenessKV.Get(kvCtx, actorBucketKey)
+	if err == nil && entry != nil && entry.Value() != nil {
+		logger.Error("actor already active elsewhere", zap.String("key", actorBucketKey))
+		return fmt.Errorf("actor already active elsewhere")
+	}
+
 	t.subject = fmt.Sprintf("%s.%s.%s",
 		t.connection.StreamName,
 		t.actor.Type(),

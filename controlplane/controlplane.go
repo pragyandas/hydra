@@ -171,10 +171,10 @@ func (cp *ControlPlane) handleBucketDiscoveryTicks(ctx context.Context) {
 			cp.timerMu.Unlock()
 
 			if !inStabilization {
-				logger.Info("discovery tick triggered, recalculating buckets")
+				logger.Debug("discovery tick triggered, recalculating buckets")
 				cp.bucketManager.RecalculateBuckets(ctx, cp.memberCount, cp.selfIndex)
 			} else {
-				logger.Info("skipping discovery tick - in stabilization window")
+				logger.Debug("skipping discovery tick - in stabilization window")
 			}
 		}
 	}
