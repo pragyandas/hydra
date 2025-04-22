@@ -22,7 +22,6 @@ func TestActorSystemRestartActorResurrection(t *testing.T) {
 	if err := system.Start(testContext); err != nil {
 		t.Fatalf("Failed to start actor system: %v", err)
 	}
-	defer system.Close(testContext)
 
 	const (
 		numMessages            = 100
