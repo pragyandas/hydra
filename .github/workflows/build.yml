@@ -19,5 +19,5 @@ jobs:
       with:
         go-version: '1.22.3'
 
-    - name: Test
-      run: go test -v ./test/e2e/...
+    - name: Test multi actor cluster resilience with actor redistribution and resurrection
+      run: go test -v ./test/e2e/multi_actor_cluster_test.go
