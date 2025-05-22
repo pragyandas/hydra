@@ -145,18 +145,6 @@ Resurrection Process:
    - Protection against duplicate actor creation with liveness checks
    - Transport layer verification ensures actors aren't active elsewhere before creation
 
-## Current Limitations and Challenges
-
-1. **Message Delivery Guarantees**
-   - At-least-once delivery semantics
-   - Message loss possible during prolonged cluster partitions
-   - No transactional processing
-
-2. **State Consistency**
-   - No distributed transactions
-   - Local state may diverge temporarily from stored state
-   - Last-write-wins semantics for conflicts
-
 ## Future Considerations
 1. Exactly-once message delivery semantics
 2. Cross-region communication optimization
