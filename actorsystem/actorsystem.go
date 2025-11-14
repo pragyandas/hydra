@@ -3,6 +3,7 @@ package actorsystem
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/pragyandas/hydra/actor"
@@ -39,7 +40,7 @@ type ActorSystem struct {
 	telemetryShutdown     TelemetryShutdown
 }
 
-func NewActorSystem(config *Config) (*ActorSystem, error) {
+func NewActorSystem(config *Config) *ActorSystem {
 	// TODO: Merge partial config with default config
 	if config == nil {
 		config = DefaultConfig()
@@ -50,6 +51,16 @@ func NewActorSystem(config *Config) (*ActorSystem, error) {
 		actors:     make(map[string]*systemActor),
 		actorTypes: make(map[string]*actor.ActorType),
 	}
+
+	return system
+}
+
+func (system *ActorSystem) WithNATSURL(url string) (*ActorSystem, error) {
+	prefix := "nats://"
+	if !strings.HasPrefix(url, prefix) {
+		return nil, fmt.Errorf("url should have prefix %s", prefix)
+	}
+	system.config.NatsURL = url
 
 	return system, nil
 }

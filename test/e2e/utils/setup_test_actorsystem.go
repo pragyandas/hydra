@@ -26,12 +26,11 @@ func SetupTestActorsystem(t *testing.T, id string, conn *TestConnection, config 
 		MessageStreamConfig:   defaultConfig.MessageStreamConfig,
 		KVConfig:              defaultConfig.KVConfig,
 		ActorLivenessKVConfig: defaultConfig.ActorLivenessKVConfig,
-		NatsURL:               conn.Server.ClientURL(),
 		ControlPlaneConfig:    defaultConfig.ControlPlaneConfig,
 		RetryInterval:         500 * time.Millisecond,
 	}
 
-	system, err := actorsystem.NewActorSystem(config)
+	system, err := actorsystem.NewActorSystem(config).WithNATSURL(conn.Server.ClientURL())
 	if err != nil {
 		t.Fatalf("Failed to create actor system: %v", err)
 	}
