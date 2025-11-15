@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hydra Chat</title>
+    <style>
+        body { font-family: sans-serif; }
+        #messages {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: scroll;
+            margin-bottom: 10px;
+        }
+        #message-box { display: flex; }
+        #input { flex-grow: 1; padding: 5px; }
+        #send-btn { padding: 5px 10px; }
+        .message { margin-bottom: 5px; }
+        .message .sender { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Hydra Actor Chat</h1>
+    <div id="messages"></div>
+    <div id="message-box">
+        <input id="input" type="text" placeholder="Type a message..." />
+        <button id="send-btn" onclick="send()">Send</button>
+    </div>
+
+    <script>
+        const input = document.getElementById("input");
+        const messages = document.getElementById("messages");
+        
+        // Generate a simple unique ID for the user for this session
+        const userId = "user-" + Math.random().toString(36).substr(2, 9);
+
+        const socket = new WebSocket(`ws://localhost:8080/messenger?userId=${userId}`);
+
+        socket.onopen = function () {
+            addMessage("System", "Connected to chat!");
+        };
+
+        socket.onmessage = function (e) {
+            try {
+                const msg = JSON.parse(e.data);
+                addMessage(msg.sender, msg.message);
+            } catch (error) {
+                console.error("Failed to parse message:", e.data, error);
+                addMessage("System", "Received a malformed message.");
+            }
+        };
+
+        socket.onclose = function() {
+            addMessage("System", "Connection closed.");
+        }
+
+        input.addEventListener("keydown", function(event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                send();
+            }
+        });
+
+        function send() {
+            if (input.value) {
+                socket.send(input.value);
+                input.value = "";
+            }
+        }
+
+        function addMessage(sender, text) {
+            const messageElement = document.createElement('div');
+            messageElement.innerHTML = `<span class="sender">${sender}:</span> ${text}`;
+            messages.appendChild(messageElement);
+            messages.scrollTop = messages.scrollHeight;
+        }
+    </script>
+</body>
+</html>
