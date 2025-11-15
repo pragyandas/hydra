@@ -20,8 +20,8 @@ type ChatroomMessage struct {
 	Message string `json:"message,omitempty"`
 }
 
-func RegisterChatroomActor(actorSystem *as.ActorSystem) error {
-	return actorSystem.RegisterActorType("chatroom", actor.ActorTypeConfig{
+func RegisterChatroomActor(ctx context.Context, actorSystem *as.ActorSystem) error {
+	return actorSystem.RegisterActorType(ctx, "chatroom", actor.ActorTypeConfig{
 		MessageHandlerFactory: func(self *actor.Actor) actor.MessageHandler {
 			return func(msg []byte) error {
 				var chatroomMessage ChatroomMessage

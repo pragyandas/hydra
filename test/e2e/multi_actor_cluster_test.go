@@ -42,7 +42,7 @@ func TestActorClusterRedistribution(t *testing.T) {
 		}
 	}
 
-	systemA.RegisterActorType("test-actor", actor.ActorTypeConfig{
+	systemA.RegisterActorType(testContext, "test-actor", actor.ActorTypeConfig{
 		MessageHandlerFactory: slowHandler,
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
@@ -64,7 +64,7 @@ func TestActorClusterRedistribution(t *testing.T) {
 		t.Fatalf("Failed to start actor system: %v", err)
 	}
 
-	systemB.RegisterActorType("test-actor", actor.ActorTypeConfig{
+	systemB.RegisterActorType(testContext, "test-actor", actor.ActorTypeConfig{
 		MessageHandlerFactory: slowHandler,
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)

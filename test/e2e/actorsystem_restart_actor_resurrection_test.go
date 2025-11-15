@@ -31,7 +31,7 @@ func TestActorSystemRestartActorResurrection(t *testing.T) {
 
 	var processedCount atomic.Int32
 
-	system.RegisterActorType("test", actor.ActorTypeConfig{
+	system.RegisterActorType(testContext, "test", actor.ActorTypeConfig{
 		MessageHandlerFactory: func(self *actor.Actor) actor.MessageHandler {
 			return func(msg []byte) error {
 				time.Sleep(processingTime)

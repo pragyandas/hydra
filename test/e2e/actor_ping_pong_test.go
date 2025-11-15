@@ -53,13 +53,13 @@ func TestActorCommunication(t *testing.T) {
 		}
 	}
 
-	system.RegisterActorType("ping", actor.ActorTypeConfig{
+	system.RegisterActorType(testContext, "ping", actor.ActorTypeConfig{
 		MessageHandlerFactory: pingHandler,
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)
 		},
 	})
-	system.RegisterActorType("pong", actor.ActorTypeConfig{
+	system.RegisterActorType(testContext, "pong", actor.ActorTypeConfig{
 		MessageHandlerFactory: pongHandler,
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)

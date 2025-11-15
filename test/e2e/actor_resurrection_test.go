@@ -40,7 +40,7 @@ func TestActorResurrection(t *testing.T) {
 		}
 	}
 
-	system.RegisterActorType("slow", actor.ActorTypeConfig{
+	system.RegisterActorType(testContext, "slow", actor.ActorTypeConfig{
 		MessageHandlerFactory: slowHandler,
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Errorf("failed to handle message: %v", err)

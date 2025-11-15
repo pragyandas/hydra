@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/pragyandas/hydra/actor"
-	"github.com/pragyandas/hydra/common"
 	"github.com/pragyandas/hydra/common/utils"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/controlplane"
@@ -66,9 +65,7 @@ func (system *ActorSystem) WithNATSURL(url string) (*ActorSystem, error) {
 }
 
 func (system *ActorSystem) Start(ctx context.Context) error {
-
-	ctx = context.WithValue(ctx, common.SystemIDKey, system.config.ID)
-	ctx = context.WithValue(ctx, common.RegionKey, system.config.Region)
+	ctx = utils.EnrichContext(ctx, system.config.ID, system.config.Region)
 
 	ctx, cancel := context.WithCancel(ctx)
 	system.ctxCancel = cancel
@@ -125,8 +122,7 @@ func (system *ActorSystem) Start(ctx context.Context) error {
 }
 
 func (system *ActorSystem) Close(ctx context.Context) {
-	ctx = context.WithValue(ctx, common.SystemIDKey, system.config.ID)
-	ctx = context.WithValue(ctx, common.RegionKey, system.config.Region)
+	ctx = utils.EnrichContext(ctx, system.config.ID, system.config.Region)
 
 	logger := telemetry.GetLogger(ctx, "actorsystem-close")
 
@@ -225,8 +221,12 @@ func (system *ActorSystem) createActorStateManager(a *actor.Actor, stateSerializ
 	return actor.NewStateManager(a, system.connection, stateSerializer)
 }
 
-func (system *ActorSystem) RegisterActorType(name string, config actor.ActorTypeConfig) error {
-	aType, err := actor.NewActorType(name,
+func (system *ActorSystem) RegisterActorType(ctx context.Context, name string, config actor.ActorTypeConfig) error {
+	ctx = utils.EnrichContext(ctx, system.config.ID, system.config.Region)
+
+	aType, err := actor.NewActorType(
+		ctx,
+		name,
 		actor.WithMessageHandlerFactory(config.MessageHandlerFactory),
 		actor.WithMessageErrorHandler(config.MessageErrorHandler),
 		actor.WithStateSerializer(config.StateSerializer),

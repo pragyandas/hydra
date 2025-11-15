@@ -1,8 +1,8 @@
 package actors
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/pragyandas/hydra/actor"
 	as "github.com/pragyandas/hydra/actorsystem"
@@ -18,19 +18,8 @@ type User struct {
 	actor *actor.Actor
 }
 
-func RegisterUserActor(actorSystem *as.ActorSystem) error {
-	return actorSystem.RegisterActorType("user", actor.ActorTypeConfig{
-		MessageHandlerFactory: func(self *actor.Actor) actor.MessageHandler {
-			return func(msg []byte) error {
-				fmt.Println("Message received by dummy handler", string(msg))
-				return nil
-			}
-		},
-		MessageErrorHandler: func(err error, msg actor.Message) {
-			fmt.Println("Message received by error handler", string(msg.Data()))
-			fmt.Println(err)
-		},
-	})
+func RegisterUserActor(ctx context.Context, actorSystem *as.ActorSystem) error {
+	return actorSystem.RegisterActorType(ctx, "user", actor.ActorTypeConfig{})
 }
 
 func CreateUser(id string, actorsystem *as.ActorSystem, messageHandler actor.MessageHandler) (*User, error) {

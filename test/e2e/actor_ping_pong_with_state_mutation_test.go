@@ -80,14 +80,14 @@ func TestActorStateMutation(t *testing.T) {
 		}
 	}
 
-	system.RegisterActorType("ping", actor.ActorTypeConfig{
+	system.RegisterActorType(testContext, "ping", actor.ActorTypeConfig{
 		MessageHandlerFactory: pingHandler,
 		StateSerializer:       serializer.NewJSONSerializer(ActorTestState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {
 			t.Logf("failed to handle message: %v", err)
 		},
 	})
-	system.RegisterActorType("pong", actor.ActorTypeConfig{
+	system.RegisterActorType(testContext, "pong", actor.ActorTypeConfig{
 		MessageHandlerFactory: pongHandler,
 		StateSerializer:       serializer.NewJSONSerializer(ActorTestState{}),
 		MessageErrorHandler: func(err error, msg actor.Message) {

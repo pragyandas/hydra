@@ -16,11 +16,11 @@ func initializeActorSystem(ctx context.Context, natsURL string) (*as.ActorSystem
 		return nil, err
 	}
 
-	if err := actors.RegisterChatroomActor(actorSystem); err != nil {
+	if err := actors.RegisterChatroomActor(ctx, actorSystem); err != nil {
 		actorSystem.Close(ctx)
 		return nil, err
 	}
-	if err := actors.RegisterUserActor(actorSystem); err != nil {
+	if err := actors.RegisterUserActor(ctx, actorSystem); err != nil {
 		actorSystem.Close(ctx)
 		return nil, err
 	}

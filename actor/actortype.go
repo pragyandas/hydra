@@ -1,6 +1,11 @@
 package actor
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+
+	"github.com/pragyandas/hydra/telemetry"
+)
 
 // ActorType defines the behavior of an actor type
 type ActorType struct {
@@ -11,7 +16,8 @@ type ActorType struct {
 	ActorConfig           Config
 }
 
-func NewActorType(name string, opts ...ActorTypeOption) (*ActorType, error) {
+func NewActorType(ctx context.Context, name string, opts ...ActorTypeOption) (*ActorType, error) {
+	logger := telemetry.GetLogger(ctx, "actorsystem-new-actor-type")
 	aType := &ActorType{
 		Name: name,
 	}
@@ -21,7 +27,12 @@ func NewActorType(name string, opts ...ActorTypeOption) (*ActorType, error) {
 	}
 
 	if aType.MessageHandlerFactory == nil {
-		return nil, fmt.Errorf("message handler is required for actor type %s", name)
+		aType.MessageHandlerFactory = func(self *Actor) MessageHandler {
+			return func(msg []byte) error {
+				logger.Info(fmt.Sprintf("%s uses dummy handler, register a custom handler", name))
+				return nil
+			}
+		}
 	}
 
 	return aType, nil
