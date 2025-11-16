@@ -122,28 +122,12 @@ func (m *Membership) sendHeartbeats(ctx context.Context) {
 }
 
 func (m *Membership) handleHeartbeat(ctx context.Context, data []byte) {
-	logger := telemetry.GetLogger(ctx, "membership-heartbeat")
 	memberID := string(data)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	isNewMember := false
-	if _, exists := m.members[memberID]; !exists {
-		isNewMember = true
-	}
-
-	// Update last seen time
-	m.members[memberID] = time.Now()
-
-	if isNewMember {
-		m.updateMemberPosition()
-		select {
-		case m.membershipChanged <- struct{}{}:
-		default:
-			logger.Debug("channel full, skipping notification")
-		}
-	}
+	m.addOrUpdateMember(ctx, memberID)
 }
 
 func (m *Membership) checkHeartbeats(ctx context.Context) {
@@ -171,15 +155,29 @@ func (m *Membership) checkHeartbeats(ctx context.Context) {
 			}
 
 			if membershipChanged {
-				m.updateMemberPosition()
-				select {
-				case m.membershipChanged <- struct{}{}:
-				default:
-					logger.Debug("channel full, skipping notification")
-				}
+				m.notifyMembershipChanged(ctx)
 			}
 			m.mu.Unlock()
 		}
+	}
+}
+
+func (m *Membership) addOrUpdateMember(ctx context.Context, memberID string) {
+	_, exists := m.members[memberID]
+	m.members[memberID] = time.Now()
+
+	if !exists {
+		m.notifyMembershipChanged(ctx)
+	}
+}
+
+func (m *Membership) notifyMembershipChanged(ctx context.Context) {
+	logger := telemetry.GetLogger(ctx, "membership-notify")
+	m.updateMemberPosition()
+	select {
+	case m.membershipChanged <- struct{}{}:
+	default:
+		logger.Debug("membershipChanged channel full, skipping notification")
 	}
 }
 
