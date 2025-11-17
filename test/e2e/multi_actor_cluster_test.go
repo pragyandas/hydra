@@ -37,7 +37,6 @@ func TestActorClusterRedistribution(t *testing.T) {
 		return func(msg []byte) error {
 			time.Sleep(processingTime)
 			processedCount.Add(1)
-			t.Logf("processed message %s", string(msg))
 			return nil
 		}
 	}
@@ -101,6 +100,17 @@ func TestActorClusterRedistribution(t *testing.T) {
 	systemA.Close(testContext)
 
 	deadline := time.Now().Add(60 * time.Second)
+
+	// Check if all buckets were redistributed to SystemB
+	for time.Now().Before(deadline) {
+		if len(systemB.GetOwnedBuckets()) == len(bucketsA)+len(bucketsB) {
+			t.Logf("systemB buckets: %v", systemB.GetOwnedBuckets())
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Check if resurrected actors in SystemB have received all messages
 	for time.Now().Before(deadline) {
 		if processedCount.Load() == int32(numMessages) {
 			break
