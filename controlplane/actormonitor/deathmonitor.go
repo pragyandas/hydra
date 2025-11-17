@@ -111,9 +111,7 @@ func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 			actorType := parts[2]
 			actorId := parts[3]
 			actorKey := fmt.Sprintf("%s.%s", actorType, actorId)
-			m.mu.Lock()
 			m.onActorDeath(ctx, actorKey)
-			m.mu.Unlock()
 		}
 	}
 

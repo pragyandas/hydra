@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
 	"go.uber.org/zap"
@@ -36,32 +37,31 @@ func (m *ActorMailboxMonitor) Start(ctx context.Context, resurrectionHandler fun
 		return
 	}
 
-	// JS does not support watching for pending messages, so we need to poll
-	// TODO: Make this interval configurable, though 1 sec is good enough
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-m.done:
 			return
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			info, err := consumer.Info(ctx)
+		default:
+			// Use Next() to wait for a message. This is more efficient than polling.
+			// It will block until a message is available or the timeout is reached.
+			msg, err := consumer.Next(jetstream.FetchMaxWait(5*time.Second), jetstream.FetchHeartbeat(1*time.Second))
 			if err != nil {
-				logger.Error("failed to get consumer info", zap.Error(err))
+				logger.Debug("error waiting for next message", zap.Error(err))
 				continue
 			}
 
-			if info.NumPending > 0 {
-				logger.Debug("dead actor has pending messages",
-					zap.String("actor", fmt.Sprintf("%s/%s", m.actorType, m.actorID)),
-					zap.Uint64("pending", info.NumPending))
+			// A message was received, which means the queue is not empty.
+			// We immediately Nak() it to make it available again for the resurrected actor.
+			// This is a safe operation that tells NATS to not consider this message delivered.
+			msg.Nak()
 
-				resurrectionHandler()
-				return
-			}
+			logger.Debug("dead actor has pending messages, requesting resurrection",
+				zap.String("actor", fmt.Sprintf("%s/%s", m.actorType, m.actorID)))
+
+			resurrectionHandler()
+			return
 		}
 	}
 }
