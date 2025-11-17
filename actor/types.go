@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pragyandas/hydra/transport"
+	"github.com/pragyandas/hydra/actor/transport"
 )
 
 type Config struct {

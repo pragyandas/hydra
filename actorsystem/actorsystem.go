@@ -7,11 +7,11 @@ import (
 	"sync"
 
 	"github.com/pragyandas/hydra/actor"
+	"github.com/pragyandas/hydra/actor/transport"
 	"github.com/pragyandas/hydra/common/utils"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/controlplane"
 	"github.com/pragyandas/hydra/telemetry"
-	"github.com/pragyandas/hydra/transport"
 	"go.uber.org/zap"
 )
 

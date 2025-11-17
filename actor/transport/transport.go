@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pragyandas/hydra/connection"
 	"github.com/pragyandas/hydra/telemetry"
@@ -183,29 +182,13 @@ func (t *ActorTransport) maintainLiveness(ctx context.Context, key string, revis
 	logger := telemetry.GetLogger(ctx, "transport-maintain-liveness")
 
 	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			// stopping the ticker here instead of in the defer
-			// as ctx done doesn't cause an exit immediately
-			ticker.Stop()
-
 			logger.Debug("context done, stopping liveness maintenance", zap.String("key", key))
-
-			// delete the liveness entry
-			deleteCtx, deleteCtxCancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer deleteCtxCancel()
-
-			if err := t.connection.ActorLivenessKV.Delete(deleteCtx, key); err != nil {
-				if err == nats.ErrConnectionClosed {
-					logger.Debug("connection closed, skipping delete", zap.String("key", key))
-					return
-				}
-				logger.Error("failed to delete liveness entry", zap.String("key", key), zap.Error(err))
-			}
 			return
-
 		case <-ticker.C:
 			newRevision, err := t.connection.ActorLivenessKV.Update(ctx, key, []byte(time.Now().Format(time.RFC3339)), revision)
 			if err != nil {

@@ -111,6 +111,7 @@ func (m *ActorDeathMonitor) findDeadActors(ctx context.Context) error {
 			actorType := parts[2]
 			actorId := parts[3]
 			actorKey := fmt.Sprintf("%s.%s", actorType, actorId)
+			logger.Debug("actor death detected by the safety net", zap.String("actor", actorKey))
 			m.onActorDeath(ctx, actorKey)
 		}
 	}
@@ -167,6 +168,7 @@ func (m *ActorDeathMonitor) monitorDeadActors(ctx context.Context) {
 			m.mu.Lock()
 			switch entry.Operation() {
 			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
+				logger.Debug("actor death event received", zap.String("actor", actorKey))
 				m.onActorDeath(ctx, actorKey)
 			case jetstream.KeyValuePut:
 				if _, exists := m.deadActors[actorKey]; exists {
